@@ -1,2 +1,2 @@
-# libDELILA
-Libraries for DAQ system at ELI-NP
+# Digitizer2
+Handle CAEN Digitizer2
