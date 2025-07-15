@@ -1,0 +1,166 @@
+#include "DigitizerFactory.hpp"
+
+#include <algorithm>
+#include <iostream>
+#include <stdexcept>
+
+// Include the concrete digitizer implementations
+#include "Digitizer2.hpp"  // Renamed from original Digitizer class
+
+namespace DELILA
+{
+namespace Digitizer
+{
+
+std::unique_ptr<IDigitizer> DigitizerFactory::CreateDigitizer(const ConfigurationManager& config)
+{
+    std::string url = config.GetParameter("URL");
+    if (url.empty()) {
+        throw std::runtime_error("URL parameter is required in configuration");
+    }
+    
+    // Try to get explicit type from configuration first
+    std::string typeStr = config.GetParameter("Type");
+    DigitizerType type = DigitizerType::UNKNOWN;
+    
+    if (!typeStr.empty()) {
+        // Convert string to enum
+        std::transform(typeStr.begin(), typeStr.end(), typeStr.begin(), ::toupper);
+        if (typeStr == "PSD1") type = DigitizerType::PSD1;
+        else if (typeStr == "PSD2") type = DigitizerType::PSD2;
+        else if (typeStr == "PHA1") type = DigitizerType::PHA1;
+        else if (typeStr == "PHA2") type = DigitizerType::PHA2;
+        else if (typeStr == "QDC1") type = DigitizerType::QDC1;
+        else if (typeStr == "SCOPE1") type = DigitizerType::SCOPE1;
+        else if (typeStr == "SCOPE2") type = DigitizerType::SCOPE2;
+    }
+    
+    // If no explicit type, try to detect from URL
+    if (type == DigitizerType::UNKNOWN) {
+        type = DetectDigitizerType(url);
+    }
+    
+    // Create appropriate digitizer based on type
+    switch (type) {
+        case DigitizerType::PSD1:
+        case DigitizerType::PHA1:
+        case DigitizerType::QDC1:
+        case DigitizerType::SCOPE1:
+            // TODO: Create Digitizer1 instance in Phase 2
+            throw std::runtime_error("Dig1 digitizers not yet implemented. Will be added in Phase 2.");
+            
+        case DigitizerType::PSD2:
+        case DigitizerType::PHA2:
+        case DigitizerType::SCOPE2:
+            // Create Digitizer2 instance (renamed from original Digitizer class)
+            return std::make_unique<Digitizer2>();
+            
+        case DigitizerType::UNKNOWN:
+        default:
+            // Fallback: try to auto-detect or default to dig2
+            std::cerr << "Warning: Could not determine digitizer type from URL '" << url 
+                      << "'. Defaulting to dig2 (PSD2) for backward compatibility." << std::endl;
+            return std::make_unique<Digitizer2>();
+    }
+}
+
+DigitizerType DigitizerFactory::DetectDigitizerType(const std::string& url)
+{
+    return ParseURL(url);
+}
+
+DigitizerType DigitizerFactory::DetectFromDeviceTree(const nlohmann::json& deviceTree)
+{
+    try {
+        // Extract firmware type and model name from device tree
+        std::string fwType;
+        std::string modelName;
+        
+        if (deviceTree.contains("par") && deviceTree["par"].contains("fwtype") && 
+            deviceTree["par"]["fwtype"].contains("value")) {
+            fwType = deviceTree["par"]["fwtype"]["value"];
+        }
+        
+        if (deviceTree.contains("par") && deviceTree["par"].contains("modelname") && 
+            deviceTree["par"]["modelname"].contains("value")) {
+            modelName = deviceTree["par"]["modelname"]["value"];
+        }
+        
+        return AnalyzeFirmware(fwType, modelName);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error analyzing device tree: " << e.what() << std::endl;
+        return DigitizerType::UNKNOWN;
+    }
+}
+
+DigitizerType DigitizerFactory::ParseURL(const std::string& url)
+{
+    // Convert to lowercase for case-insensitive comparison
+    std::string lowerUrl = url;
+    std::transform(lowerUrl.begin(), lowerUrl.end(), lowerUrl.begin(), ::tolower);
+    
+    // Check for explicit scheme prefixes
+    if (lowerUrl.find("dig1://") == 0) {
+        return DigitizerType::PSD1;  // Default dig1 type
+    }
+    else if (lowerUrl.find("dig2://") == 0) {
+        return DigitizerType::PSD2;  // Default dig2 type
+    }
+    else if (lowerUrl.find("usb://") == 0 || lowerUrl.find("eth://") == 0) {
+        // Legacy URLs - need device tree analysis for type detection
+        return DigitizerType::UNKNOWN;
+    }
+    
+    // No recognizable scheme, return unknown for further analysis
+    return DigitizerType::UNKNOWN;
+}
+
+DigitizerType DigitizerFactory::AnalyzeFirmware(const std::string& fwType, const std::string& modelName)
+{
+    // Convert to lowercase for comparison
+    std::string lowerFwType = fwType;
+    std::string lowerModelName = modelName;
+    std::transform(lowerFwType.begin(), lowerFwType.end(), lowerFwType.begin(), ::tolower);
+    std::transform(lowerModelName.begin(), lowerModelName.end(), lowerModelName.begin(), ::tolower);
+    
+    // Analyze firmware type patterns
+    if (lowerFwType.find("dpp-psd") != std::string::npos) {
+        return DigitizerType::PSD1;
+    }
+    else if (lowerFwType.find("dpp_psd") != std::string::npos || lowerFwType.find("dpp-pha-psd") != std::string::npos) {
+        return DigitizerType::PSD2;
+    }
+    else if (lowerFwType.find("dpp-pha") != std::string::npos && lowerFwType.find("psd") == std::string::npos) {
+        // Check if it's PHA1 or PHA2 based on other indicators
+        if (lowerFwType.find("_v2") != std::string::npos || lowerModelName.find("27") != std::string::npos) {
+            return DigitizerType::PHA2;
+        }
+        return DigitizerType::PHA1;
+    }
+    else if (lowerFwType.find("dpp-qdc") != std::string::npos) {
+        return DigitizerType::QDC1;
+    }
+    else if (lowerFwType.find("scope") != std::string::npos || lowerFwType.find("oscilloscope") != std::string::npos) {
+        // Distinguish SCOPE1 vs SCOPE2 based on model or firmware version
+        if (lowerModelName.find("27") != std::string::npos || lowerFwType.find("_v2") != std::string::npos) {
+            return DigitizerType::SCOPE2;
+        }
+        return DigitizerType::SCOPE1;
+    }
+    
+    // Fallback: analyze model name if firmware type analysis fails
+    if (lowerModelName.find("27") != std::string::npos) {
+        // 2nd generation models (dig2)
+        return DigitizerType::PSD2;  // Default to PSD2 for 2nd gen
+    }
+    else if (lowerModelName.find("25") != std::string::npos || lowerModelName.find("73") != std::string::npos) {
+        // 1st generation models (dig1)
+        return DigitizerType::PSD1;  // Default to PSD1 for 1st gen
+    }
+    
+    return DigitizerType::UNKNOWN;
+}
+
+}  // namespace Digitizer
+}  // namespace DELILA

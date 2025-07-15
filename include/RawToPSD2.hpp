@@ -10,6 +10,7 @@
 
 #include "PSD2Data.hpp"
 #include "RawData.hpp"
+#include "EventData.hpp"
 
 namespace DELILA {
 namespace Digitizer {
@@ -21,6 +22,11 @@ enum class DataType {
   Unknown
 };
 
+enum class OutputFormat {
+  PSD2Data,
+  EventData
+};
+
 class RawToPSD2 {
  public:
   // Constructor/Destructor
@@ -30,15 +36,20 @@ class RawToPSD2 {
   // Configuration
   void SetTimeStep(uint32_t timeStep) { fTimeStep = timeStep; }
   void SetDumpFlag(bool dumpFlag) { fDumpFlag = dumpFlag; }
+  void SetOutputFormat(OutputFormat format) { fOutputFormat = format; }
+  void SetModuleNumber(uint8_t moduleNumber) { fModuleNumber = moduleNumber; }
 
   // Data Processing
   DataType AddData(std::unique_ptr<RawData_t> rawData);
   std::unique_ptr<std::vector<std::unique_ptr<PSD2Data_t>>> GetData();
+  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> GetEventData();
 
  private:
   // === Configuration ===
   uint32_t fTimeStep = 1;
   bool fDumpFlag = false;
+  OutputFormat fOutputFormat = OutputFormat::EventData;
+  uint8_t fModuleNumber = 0;
 
   // === Threading Control ===
   bool fDecodeFlag = false;
@@ -54,6 +65,9 @@ class RawToPSD2 {
   // === Processed Data Storage ===
   std::unique_ptr<std::vector<std::unique_ptr<PSD2Data_t>>> fPSD2DataVec;
   std::mutex fPSD2DataMutex;
+  
+  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> fEventDataVec;
+  std::mutex fEventDataMutex;
 
   // === Data Processing State ===
   uint64_t fLastCounter = 0;
@@ -92,6 +106,9 @@ class RawToPSD2 {
   uint32_t GetMultiplicationFactor(uint32_t encodedValue) const;
   void DecodeWaveformPoint(uint32_t point, size_t dataIndex, 
                           const WaveformConfig& config, PSD2Data_t& psd2Data) const;
+  
+  // === EventData Conversion ===
+  std::unique_ptr<EventData> ConvertPSD2ToEventData(const PSD2Data_t& psd2Data) const;
 };
 
 }  // namespace Digitizer
