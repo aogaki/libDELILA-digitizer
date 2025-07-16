@@ -12,10 +12,7 @@ namespace DELILA
 namespace Digitizer
 {
 
-Digitizer1::Digitizer1()
-    : fEventDataVec(std::make_unique<std::vector<std::unique_ptr<EventData>>>())
-{
-}
+Digitizer1::Digitizer1() {}
 
 Digitizer1::~Digitizer1()
 {
@@ -127,9 +124,11 @@ bool Digitizer1::StartAcquisition()
 {
   std::cout << "Start acquisition" << std::endl;
 
-  // Initialize EventData storage if not already created
-  if (!fEventDataVec) {
-    fEventDataVec = std::make_unique<std::vector<std::unique_ptr<EventData>>>();
+  // Dig1Decoder should already be created in ConfigureSampleRate()
+  if (!fDig1Decoder) {
+    std::cerr << "Dig1Decoder not initialized - this should not happen!"
+              << std::endl;
+    return false;
   }
 
   // Start data acquisition threads
@@ -138,9 +137,7 @@ bool Digitizer1::StartAcquisition()
     fReadDataThreads.emplace_back(&Digitizer1::ReadDataThread, this);
   }
 
-  // Start single EventData conversion thread
-  fEventConversionThread =
-      std::thread(&Digitizer1::EventConversionThread, this);
+  // Note: Dig1Decoder handles data conversion internally in its threads
 
   bool status = true;
   // Only send software start command if startmode is set to START_MODE_SW
@@ -191,9 +188,7 @@ bool Digitizer1::StopAcquisition()
   fReadDataThreads.clear();
 
   // Stop EventData conversion thread
-  if (fEventConversionThread.joinable()) {
-    fEventConversionThread.join();
-  }
+  // Dig1Decoder will stop automatically when threads join
 
   return status;
 }
@@ -201,13 +196,17 @@ bool Digitizer1::StopAcquisition()
 std::unique_ptr<std::vector<std::unique_ptr<EventData>>>
 Digitizer1::GetEventData()
 {
-  auto data = std::make_unique<std::vector<std::unique_ptr<EventData>>>();
-  {
-    std::lock_guard<std::mutex> lock(fEventDataMutex);
-    if (fEventDataVec && !fEventDataVec->empty()) {
-      data->swap(*fEventDataVec);
-      fEventDataVec->clear();
-    }
+  // Get EventData directly from Dig1Decoder
+  if (!fDig1Decoder) {
+    std::cerr << "Warning: Dig1Decoder not initialized in GetEventData()"
+              << std::endl;
+    return std::make_unique<std::vector<std::unique_ptr<EventData>>>();
+  }
+
+  auto data = fDig1Decoder->GetEventData();
+  if (fDebugFlag && data && !data->empty()) {
+    std::cout << "Retrieved " << data->size() << " events from Dig1Decoder"
+              << std::endl;
   }
   return data;
 }
@@ -593,9 +592,18 @@ bool Digitizer1::ConfigureSampleRate()
     return false;
   }
 
-  // For dig1, we don't have Dig2Decoder converter, so we just store the info
   // Calculate time per sample in nanoseconds: (1000 ns) / (rate in MHz)
   uint32_t timeStepNs = 1000 / adcSamplRateMHz;
+
+  // Create Dig1Decoder if not already created
+  if (!fDig1Decoder) {
+    fDig1Decoder = std::make_unique<Dig1Decoder>(fNThreads);
+  }
+
+  // Configure Dig1Decoder
+  fDig1Decoder->SetTimeStep(timeStepNs);
+  fDig1Decoder->SetDumpFlag(fDebugFlag);
+  fDig1Decoder->SetModuleNumber(fModuleNumber);
 
   std::cout << "ADC Sample Rate: " << adcSamplRateMHz << " MHz" << std::endl;
   std::cout << "Time step: " << timeStepNs << " ns per sample" << std::endl;
@@ -652,11 +660,17 @@ void Digitizer1::ReadDataThread()
     auto err = ReadDataWithLock(rawData, timeOut);
 
     if (err == CAEN_FELib_Success) {
-      std::cout << "Read " << rawData->size << " bytes of raw data with "
-                << rawData->nEvents << " events" << std::endl;
-      // Add raw data to queue for processing
-      std::lock_guard<std::mutex> lock(fRawDataMutex);
-      fRawDataQueue.push_back(std::move(rawData));
+      // Add data through Dig1Decoder converter ONLY
+      if (fDig1Decoder) {
+        auto dataType = fDig1Decoder->AddData(std::move(rawData));
+        if (fDebugFlag) {
+          std::cout << "Added data to Dig1Decoder, type: "
+                    << static_cast<int>(dataType) << std::endl;
+        }
+      } else {
+        std::cerr << "Error: Dig1Decoder not available in ReadDataThread"
+                  << std::endl;
+      }
       rawData = std::make_unique<RawData_t>(fMaxRawDataSize);
     } else if (err == CAEN_FELib_Timeout) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -680,89 +694,13 @@ int Digitizer1::ReadDataWithLock(std::unique_ptr<RawData_t> &rawData,
   return retCode;
 }
 
-void Digitizer1::EventConversionThread()
-{
-  while (fDataTakingFlag) {
-    // Process raw data queue
-    std::unique_ptr<RawData_t> rawData;
-    {
-      std::lock_guard<std::mutex> lock(fRawDataMutex);
-      if (!fRawDataQueue.empty()) {
-        rawData = std::move(fRawDataQueue.front());
-        fRawDataQueue.pop_front();
-      }
-    }
+// EventConversionThread removed - Dig1Decoder handles conversion internally
 
-    if (rawData && rawData->size > 0) {
-      // Convert raw data to EventData
-      std::vector<std::unique_ptr<EventData>> eventDataVec;
-      ProcessDig1RawData(rawData->data, eventDataVec);
+// ConvertRawToEventData removed - Dig1Decoder handles conversion internally
 
-      if (!eventDataVec.empty()) {
-        // Add to EventData storage
-        std::lock_guard<std::mutex> lock(fEventDataMutex);
-        if (fEventDataVec) {
-          fEventDataVec->insert(fEventDataVec->end(),
-                                std::make_move_iterator(eventDataVec.begin()),
-                                std::make_move_iterator(eventDataVec.end()));
-        }
-      }
-    } else {
-      // No data available, sleep briefly to avoid busy-wait CPU consumption
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-  }
-}
+// ProcessDig1RawData removed - Dig1Decoder handles raw data processing internally
 
-std::unique_ptr<EventData> Digitizer1::ConvertRawToEventData(
-    const RawData_t &rawData)
-{
-  std::cout << "Digitizer1::ConvertRawToEventData() - skeleton implementation"
-            << std::endl;
-
-  // TODO: Implement dig1 raw to EventData conversion
-  // - Parse dig1 raw data format
-  // - Extract event information
-  // - Create EventData object
-  // - Set all relevant fields
-
-  return nullptr;  // Skeleton returns nullptr
-}
-
-void Digitizer1::ProcessDig1RawData(
-    const std::vector<uint8_t> &data,
-    std::vector<std::unique_ptr<EventData>> &eventDataVec)
-{
-  // Basic skeleton implementation - will be enhanced later
-  // For now, just create a placeholder event to demonstrate the flow
-  if (data.size() > 0) {
-    // Create a basic EventData object as placeholder
-    auto eventData = std::make_unique<EventData>();
-    eventData->channel = 0;
-    eventData->timeStampNs = 
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count();
-    eventData->energy = 1000;
-
-    eventDataVec.push_back(std::move(eventData));
-  }
-}
-
-void Digitizer1::DecodeDig1Event(
-    const std::vector<uint8_t>::const_iterator &dataStart, size_t &wordIndex,
-    EventData &eventData)
-{
-  std::cout << "Digitizer1::DecodeDig1Event() - skeleton implementation"
-            << std::endl;
-
-  // TODO: Implement dig1 event decoding
-  // - Parse dig1 event header
-  // - Extract timestamp, energy, flags
-  // - Extract waveform data if present
-  // - Set EventData fields
-  // - Update word index
-}
+// DecodeDig1Event removed - Dig1Decoder handles event decoding internally
 
 }  // namespace Digitizer
 }  // namespace DELILA

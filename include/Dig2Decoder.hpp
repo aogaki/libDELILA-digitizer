@@ -10,16 +10,11 @@
 
 #include "RawData.hpp"
 #include "EventData.hpp"
+#include "DataType.hpp"
 
 namespace DELILA {
 namespace Digitizer {
 
-enum class DataType {
-  Start,
-  Stop,
-  Event,
-  Unknown
-};
 
 
 class Dig2Decoder {

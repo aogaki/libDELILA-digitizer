@@ -14,6 +14,7 @@
 #include "IDigitizer.hpp"
 #include "ParameterValidator.hpp"
 #include "RawData.hpp"
+#include "Dig1Decoder.hpp"
 
 namespace DELILA
 {
@@ -68,19 +69,11 @@ class Digitizer1 : public IDigitizer
   DigitizerType fDigitizerType = DigitizerType::UNKNOWN;
 
   // === Data Processing ===
+  std::unique_ptr<Dig1Decoder> fDig1Decoder;
   std::unique_ptr<ParameterValidator> fParameterValidator;
   bool fDataTakingFlag = false;
   std::vector<std::thread> fReadDataThreads;
   std::mutex fReadDataMutex;
-
-  // === EventData Storage ===
-  std::thread fEventConversionThread;
-  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> fEventDataVec;
-  std::mutex fEventDataMutex;
-
-  // === Raw Data Queue ===
-  std::deque<std::unique_ptr<RawData_t>> fRawDataQueue;
-  std::mutex fRawDataMutex;
 
   // === Hardware Communication ===
   bool Open(const std::string &url);
