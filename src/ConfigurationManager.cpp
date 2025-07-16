@@ -278,14 +278,21 @@ ConfigurationManager::LoadResult ConfigurationManager::ParseLine(const std::stri
 }
 
 std::pair<std::string, std::string> ConfigurationManager::SplitKeyValue(const std::string& line) const {
+  // First remove any comments from the line
+  std::string cleanLine = line;
+  size_t commentPos = cleanLine.find_first_of("#;");
+  if (commentPos != std::string::npos) {
+    cleanLine = cleanLine.substr(0, commentPos);
+  }
+  
   // Find first space or tab to split key and value
-  size_t spacePos = line.find_first_of(" \t");
+  size_t spacePos = cleanLine.find_first_of(" \t");
   if (spacePos == std::string::npos) {
     return {"", ""};
   }
 
-  std::string key = TrimWhitespace(line.substr(0, spacePos));
-  std::string value = TrimWhitespace(line.substr(spacePos + 1));
+  std::string key = TrimWhitespace(cleanLine.substr(0, spacePos));
+  std::string value = TrimWhitespace(cleanLine.substr(spacePos + 1));
 
   return {key, value};
 }

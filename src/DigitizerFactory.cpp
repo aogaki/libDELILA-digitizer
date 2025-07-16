@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 // Include the concrete digitizer implementations
+#include "Digitizer1.hpp"  // Dig1 implementation
 #include "Digitizer2.hpp"  // Renamed from original Digitizer class
 
 namespace DELILA
@@ -46,8 +47,8 @@ std::unique_ptr<IDigitizer> DigitizerFactory::CreateDigitizer(const Configuratio
         case DigitizerType::PHA1:
         case DigitizerType::QDC1:
         case DigitizerType::SCOPE1:
-            // TODO: Create Digitizer1 instance in Phase 2
-            throw std::runtime_error("Dig1 digitizers not yet implemented. Will be added in Phase 2.");
+            // Create Digitizer1 instance (skeleton implementation)
+            return std::make_unique<Digitizer1>();
             
         case DigitizerType::PSD2:
         case DigitizerType::PHA2:

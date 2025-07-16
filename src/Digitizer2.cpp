@@ -134,18 +134,14 @@ bool Digitizer2::Configure()
     return false;
   }
 
-  // Arm the acquisition
-  return SendCommand("/cmd/ArmAcquisition");
+  return true;
 }
 
 // ============================================================================
 // Configuration Helper Methods
 // ============================================================================
 
-bool Digitizer2::ResetDigitizer()
-{
-  return SendCommand("/cmd/Reset");
-}
+bool Digitizer2::ResetDigitizer() { return SendCommand("/cmd/Reset"); }
 
 bool Digitizer2::ApplyConfiguration()
 {
@@ -166,13 +162,13 @@ bool Digitizer2::ConfigureRecordLength()
     std::cerr << "Failed to get record length parameter" << std::endl;
     return false;
   }
-  
+
   auto rl = std::stoi(buf);
   if (rl < 0) {
     std::cerr << "Invalid record length: " << rl << std::endl;
     return false;
   }
-  
+
   fRecordLength = rl;
   std::cout << "Record length: " << fRecordLength << std::endl;
   return true;
@@ -185,7 +181,7 @@ bool Digitizer2::ConfigureMaxRawDataSize()
     std::cerr << "Failed to get max raw data size" << std::endl;
     return false;
   }
-  
+
   fMaxRawDataSize = std::stoi(buf);
   std::cout << "Max raw data size: " << fMaxRawDataSize << std::endl;
   return true;
@@ -197,7 +193,7 @@ bool Digitizer2::InitializeDataConverter()
   if (!fRawToPSD2) {
     fRawToPSD2 = std::make_unique<RawToPSD2>(fNThreads);
   }
-  
+
   fRawToPSD2->SetDumpFlag(fDebugFlag);
   fRawToPSD2->SetOutputFormat(OutputFormat::EventData);
   fRawToPSD2->SetModuleNumber(fModuleNumber);
@@ -211,26 +207,29 @@ bool Digitizer2::ConfigureSampleRate()
     std::cerr << "Failed to get ADC sample rate" << std::endl;
     return false;
   }
-  
+
   auto adcSamplRateMHz = std::stoi(buf);  // Sample rate in MHz
   if (adcSamplRateMHz <= 0) {
-    std::cerr << "Invalid ADC sample rate: " << adcSamplRateMHz << " MHz" << std::endl;
+    std::cerr << "Invalid ADC sample rate: " << adcSamplRateMHz << " MHz"
+              << std::endl;
     return false;
   }
-  
+
   // Calculate time per sample in nanoseconds: (1000 ns) / (rate in MHz)
   uint32_t timeStepNs = 1000 / adcSamplRateMHz;
   fRawToPSD2->SetTimeStep(timeStepNs);
-  
+
   std::cout << "ADC Sample Rate: " << adcSamplRateMHz << " MHz" << std::endl;
   std::cout << "Time step: " << timeStepNs << " ns per sample" << std::endl;
-  
+
   return true;
 }
 
 bool Digitizer2::StartAcquisition()
 {
   std::cout << "Start acquisition" << std::endl;
+
+  // Arm the acquisition
 
   // Initialize EventData storage if not already created
   if (!fEventDataVec) {
@@ -244,10 +243,27 @@ bool Digitizer2::StartAcquisition()
   }
 
   // Start single EventData conversion thread
-  fEventConversionThread = std::thread(&Digitizer2::EventConversionThread, this);
+  fEventConversionThread =
+      std::thread(&Digitizer2::EventConversionThread, this);
+
+  SendCommand("/cmd/ArmAcquisition");
 
   auto status = true;
-  status &= SendCommand("/cmd/SwStartAcquisition");
+  // Only send software start command if StartSource is set to SWcmd
+  std::string startSource;
+  if (GetParameter("/par/StartSource", startSource) && startSource == "SWcmd") {
+    std::cout << "StartSource is SWcmd - waiting before sending software start "
+                 "command"
+              << std::endl;
+    // Short sleep to allow other digitizers to prepare
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::cout << "Sending software start command" << std::endl;
+    status &= SendCommand("/cmd/SwStartAcquisition");
+  } else {
+    std::cout << "StartSource is not SWcmd (" << startSource
+              << ") - skipping software start command" << std::endl;
+  }
+
   return status;
 }
 
@@ -350,7 +366,7 @@ bool Digitizer2::EndpointConfigure()
 }
 
 int Digitizer2::ReadDataWithLock(std::unique_ptr<RawData_t> &rawData,
-                                int timeOut)
+                                 int timeOut)
 {
   int retCode = CAEN_FELib_Timeout;
 
@@ -753,7 +769,6 @@ void Digitizer2::EventConversionThread()
     }
   }
 }
-
 
 }  // namespace Digitizer
 }  // namespace DELILA
