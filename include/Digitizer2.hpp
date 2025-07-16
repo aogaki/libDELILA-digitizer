@@ -12,10 +12,9 @@
 #include "ConfigurationManager.hpp"
 #include "EventData.hpp"
 #include "IDigitizer.hpp"
-#include "PSD2Data.hpp"
 #include "ParameterValidator.hpp"
 #include "RawData.hpp"
-#include "RawToPSD2.hpp"
+#include "Dig2Decoder.hpp"
 
 namespace DELILA
 {
@@ -70,19 +69,15 @@ class Digitizer2 : public IDigitizer
   DigitizerType fDigitizerType = DigitizerType::UNKNOWN;
 
   // === Data Processing ===
-  std::unique_ptr<RawToPSD2> fRawToPSD2;
+  std::unique_ptr<Dig2Decoder> fDig2Decoder;
   std::unique_ptr<ParameterValidator> fParameterValidator;
   bool fDataTakingFlag = false;
   std::vector<std::thread> fReadDataThreads;
   std::mutex fReadDataMutex;
 
-  // === EventData Conversion ===
-  std::thread fEventConversionThread;
-  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> fEventDataVec;
-  std::mutex fEventDataMutex;
 
   // === Event Data Processing ===
-  // Note: Event data processing is now handled by RawToPSD2
+  // Note: Event data processing is now handled by Dig2Decoder
 
   // === Hardware Communication ===
   bool Open(const std::string &url);
@@ -112,9 +107,6 @@ class Digitizer2 : public IDigitizer
   nlohmann::json GetReadDataFormatRAW();
   void ReadDataThread();
   int ReadDataWithLock(std::unique_ptr<RawData_t> &rawData, int timeOut);
-
-  // === EventData Conversion ===
-  void EventConversionThread();
 
   // === Note: All data is automatically converted to EventData ===
 };

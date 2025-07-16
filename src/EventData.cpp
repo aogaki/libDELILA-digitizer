@@ -21,7 +21,8 @@ EventData::EventData(size_t waveformSize)
       digitalProbe2Type(0),
       digitalProbe3Type(0),
       digitalProbe4Type(0),
-      downSampleFactor(0) {
+      downSampleFactor(0),
+      flags(0) {
   if (waveformSize > 0) {
     ResizeWaveform(waveformSize);
   }
@@ -62,27 +63,7 @@ EventData::EventData(EventData&& other) noexcept
       digitalProbe3Type(other.digitalProbe3Type),
       digitalProbe4Type(other.digitalProbe4Type),
       downSampleFactor(other.downSampleFactor),
-      // Private members
-      timeStampNs_(other.timeStampNs_),
-      waveformSize_(other.waveformSize_),
-      energy_(other.energy_),
-      energyShort_(other.energyShort_),
-      module_(other.module_),
-      channel_(other.channel_),
-      timeResolution_(other.timeResolution_),
-      analogProbe1Type_(other.analogProbe1Type_),
-      analogProbe2Type_(other.analogProbe2Type_),
-      digitalProbe1Type_(other.digitalProbe1Type_),
-      digitalProbe2Type_(other.digitalProbe2Type_),
-      digitalProbe3Type_(other.digitalProbe3Type_),
-      digitalProbe4Type_(other.digitalProbe4Type_),
-      downSampleFactor_(other.downSampleFactor_),
-      analogProbe1_(std::move(other.analogProbe1_)),
-      analogProbe2_(std::move(other.analogProbe2_)),
-      digitalProbe1_(std::move(other.digitalProbe1_)),
-      digitalProbe2_(std::move(other.digitalProbe2_)),
-      digitalProbe3_(std::move(other.digitalProbe3_)),
-      digitalProbe4_(std::move(other.digitalProbe4_)) {
+      flags(other.flags) {
   
   // Reset other object
   other.timeStampNs = 0.0;
@@ -99,6 +80,7 @@ EventData::EventData(EventData&& other) noexcept
   other.digitalProbe3Type = 0;
   other.digitalProbe4Type = 0;
   other.downSampleFactor = 0;
+  other.flags = 0;
 }
 
 // Move assignment operator
@@ -125,28 +107,7 @@ EventData& EventData::operator=(EventData&& other) noexcept {
     digitalProbe3Type = other.digitalProbe3Type;
     digitalProbe4Type = other.digitalProbe4Type;
     downSampleFactor = other.downSampleFactor;
-    
-    // Move private members
-    timeStampNs_ = other.timeStampNs_;
-    waveformSize_ = other.waveformSize_;
-    energy_ = other.energy_;
-    energyShort_ = other.energyShort_;
-    module_ = other.module_;
-    channel_ = other.channel_;
-    timeResolution_ = other.timeResolution_;
-    analogProbe1Type_ = other.analogProbe1Type_;
-    analogProbe2Type_ = other.analogProbe2Type_;
-    digitalProbe1Type_ = other.digitalProbe1Type_;
-    digitalProbe2Type_ = other.digitalProbe2Type_;
-    digitalProbe3Type_ = other.digitalProbe3Type_;
-    digitalProbe4Type_ = other.digitalProbe4Type_;
-    downSampleFactor_ = other.downSampleFactor_;
-    analogProbe1_ = std::move(other.analogProbe1_);
-    analogProbe2_ = std::move(other.analogProbe2_);
-    digitalProbe1_ = std::move(other.digitalProbe1_);
-    digitalProbe2_ = std::move(other.digitalProbe2_);
-    digitalProbe3_ = std::move(other.digitalProbe3_);
-    digitalProbe4_ = std::move(other.digitalProbe4_);
+    flags = other.flags;
     
     // Reset other object
     other.timeStampNs = 0.0;
@@ -163,29 +124,21 @@ EventData& EventData::operator=(EventData&& other) noexcept {
     other.digitalProbe3Type = 0;
     other.digitalProbe4Type = 0;
     other.downSampleFactor = 0;
+    other.flags = 0;
   }
   return *this;
 }
 
 void EventData::ResizeWaveform(size_t size) {
   waveformSize = size;
-  waveformSize_ = size;
   
-  // Resize public vectors
+  // Resize vectors
   analogProbe1.resize(size);
   analogProbe2.resize(size);
   digitalProbe1.resize(size);
   digitalProbe2.resize(size);
   digitalProbe3.resize(size);
   digitalProbe4.resize(size);
-  
-  // Resize private vectors
-  analogProbe1_.resize(size);
-  analogProbe2_.resize(size);
-  digitalProbe1_.resize(size);
-  digitalProbe2_.resize(size);
-  digitalProbe3_.resize(size);
-  digitalProbe4_.resize(size);
 }
 
 void EventData::ClearWaveform() {
@@ -205,6 +158,15 @@ void EventData::Print() const {
   std::cout << "Energy Short: " << energyShort << std::endl;
   std::cout << "Time Resolution: " << static_cast<int>(timeResolution) << std::endl;
   std::cout << "Down Sample Factor: " << static_cast<int>(downSampleFactor) << std::endl;
+  std::cout << "Flags: 0x" << std::hex << flags << std::dec;
+  if (flags != 0) {
+    std::cout << " (";
+    if (HasPileup()) std::cout << "PILEUP ";
+    if (HasTriggerLost()) std::cout << "TRIGGER_LOST ";
+    if (HasOverRange()) std::cout << "OVER_RANGE ";
+    std::cout << ")";
+  }
+  std::cout << std::endl;
   
   std::cout << "\nProbe Types:" << std::endl;
   std::cout << "  Analog Probe 1: " << static_cast<int>(analogProbe1Type) << std::endl;
@@ -323,7 +285,7 @@ void EventData::PrintWaveform(size_t maxSamples) const {
 }
 
 void EventData::CopyFrom(const EventData& other) {
-  // Copy public members
+  // Copy all public members
   timeStampNs = other.timeStampNs;
   waveformSize = other.waveformSize;
   analogProbe1 = other.analogProbe1;
@@ -344,28 +306,7 @@ void EventData::CopyFrom(const EventData& other) {
   digitalProbe3Type = other.digitalProbe3Type;
   digitalProbe4Type = other.digitalProbe4Type;
   downSampleFactor = other.downSampleFactor;
-  
-  // Copy private members
-  timeStampNs_ = other.timeStampNs_;
-  waveformSize_ = other.waveformSize_;
-  energy_ = other.energy_;
-  energyShort_ = other.energyShort_;
-  module_ = other.module_;
-  channel_ = other.channel_;
-  timeResolution_ = other.timeResolution_;
-  analogProbe1Type_ = other.analogProbe1Type_;
-  analogProbe2Type_ = other.analogProbe2Type_;
-  digitalProbe1Type_ = other.digitalProbe1Type_;
-  digitalProbe2Type_ = other.digitalProbe2Type_;
-  digitalProbe3Type_ = other.digitalProbe3Type_;
-  digitalProbe4Type_ = other.digitalProbe4Type_;
-  downSampleFactor_ = other.downSampleFactor_;
-  analogProbe1_ = other.analogProbe1_;
-  analogProbe2_ = other.analogProbe2_;
-  digitalProbe1_ = other.digitalProbe1_;
-  digitalProbe2_ = other.digitalProbe2_;
-  digitalProbe3_ = other.digitalProbe3_;
-  digitalProbe4_ = other.digitalProbe4_;
+  flags = other.flags;
 }
 
 }  // namespace Digitizer

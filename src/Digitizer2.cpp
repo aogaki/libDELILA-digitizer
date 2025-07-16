@@ -189,14 +189,13 @@ bool Digitizer2::ConfigureMaxRawDataSize()
 
 bool Digitizer2::InitializeDataConverter()
 {
-  // Create RawToPSD2 converter if not already created
-  if (!fRawToPSD2) {
-    fRawToPSD2 = std::make_unique<RawToPSD2>(fNThreads);
+  // Create Dig2Decoder converter if not already created
+  if (!fDig2Decoder) {
+    fDig2Decoder = std::make_unique<Dig2Decoder>(fNThreads);
   }
 
-  fRawToPSD2->SetDumpFlag(fDebugFlag);
-  fRawToPSD2->SetOutputFormat(OutputFormat::EventData);
-  fRawToPSD2->SetModuleNumber(fModuleNumber);
+  fDig2Decoder->SetDumpFlag(fDebugFlag);
+  fDig2Decoder->SetModuleNumber(fModuleNumber);
   return true;
 }
 
@@ -217,7 +216,7 @@ bool Digitizer2::ConfigureSampleRate()
 
   // Calculate time per sample in nanoseconds: (1000 ns) / (rate in MHz)
   uint32_t timeStepNs = 1000 / adcSamplRateMHz;
-  fRawToPSD2->SetTimeStep(timeStepNs);
+  fDig2Decoder->SetTimeStep(timeStepNs);
 
   std::cout << "ADC Sample Rate: " << adcSamplRateMHz << " MHz" << std::endl;
   std::cout << "Time step: " << timeStepNs << " ns per sample" << std::endl;
@@ -232,9 +231,6 @@ bool Digitizer2::StartAcquisition()
   // Arm the acquisition
 
   // Initialize EventData storage if not already created
-  if (!fEventDataVec) {
-    fEventDataVec = std::make_unique<std::vector<std::unique_ptr<EventData>>>();
-  }
 
   // Start data acquisition threads
   fDataTakingFlag = true;
@@ -243,8 +239,6 @@ bool Digitizer2::StartAcquisition()
   }
 
   // Start single EventData conversion thread
-  fEventConversionThread =
-      std::thread(&Digitizer2::EventConversionThread, this);
 
   SendCommand("/cmd/ArmAcquisition");
 
@@ -293,11 +287,8 @@ bool Digitizer2::StopAcquisition()
 
   // Stop EventData conversion thread
   fDataTakingFlag = false;  // This will stop conversion thread too
-  if (fEventConversionThread.joinable()) {
-    fEventConversionThread.join();
-  }
 
-  // RawToPSD2 will stop automatically when threads join
+  // Dig2Decoder will stop automatically when threads join
 
   return status;
 }
@@ -326,15 +317,8 @@ bool Digitizer2::CheckStatus()
 std::unique_ptr<std::vector<std::unique_ptr<EventData>>>
 Digitizer2::GetEventData()
 {
-  auto data = std::make_unique<std::vector<std::unique_ptr<EventData>>>();
-  {
-    std::lock_guard<std::mutex> lock(fEventDataMutex);
-    if (fEventDataVec && !fEventDataVec->empty()) {
-      data->swap(*fEventDataVec);
-      fEventDataVec->clear();
-    }
-  }
-  return data;
+  // Get EventData directly from Dig2Decoder
+  return fDig2Decoder ? fDig2Decoder->GetEventData() : std::make_unique<std::vector<std::unique_ptr<EventData>>>();
 }
 
 // ============================================================================
@@ -389,10 +373,10 @@ void Digitizer2::ReadDataThread()
     auto err = ReadDataWithLock(rawData, timeOut);
 
     if (err == CAEN_FELib_Success) {
-      // Add data through RawToPSD2 converter ONLY
-      // EventConversionThread will poll GetData() separately
-      if (fRawToPSD2) {
-        fRawToPSD2->AddData(std::move(rawData));
+      // Add data through Dig2Decoder converter ONLY
+      // Data will be converted directly by Dig2Decoder
+      if (fDig2Decoder) {
+        fDig2Decoder->AddData(std::move(rawData));
       }
       rawData = std::make_unique<RawData_t>(fMaxRawDataSize);
     } else if (err == CAEN_FELib_Timeout) {
@@ -745,30 +729,6 @@ void Digitizer2::PrintDeviceInfo()
   std::cout << "=========================" << std::endl;
 }
 
-// ============================================================================
-// EventData Conversion Methods
-// ============================================================================
-
-void Digitizer2::EventConversionThread()
-{
-  while (fDataTakingFlag) {
-    // Poll RawToPSD2 for converted EventData
-    auto eventDataVec = fRawToPSD2 ? fRawToPSD2->GetEventData() : nullptr;
-
-    if (eventDataVec && !eventDataVec->empty()) {
-      // Add batch to EventData storage
-      std::lock_guard<std::mutex> lock(fEventDataMutex);
-      if (fEventDataVec) {
-        fEventDataVec->insert(fEventDataVec->end(),
-                              std::make_move_iterator(eventDataVec->begin()),
-                              std::make_move_iterator(eventDataVec->end()));
-      }
-    } else {
-      // No data available, sleep briefly to avoid busy-wait CPU consumption
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-  }
-}
 
 }  // namespace Digitizer
 }  // namespace DELILA

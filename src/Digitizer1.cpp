@@ -593,7 +593,7 @@ bool Digitizer1::ConfigureSampleRate()
     return false;
   }
 
-  // For dig1, we don't have RawToPSD2 converter, so we just store the info
+  // For dig1, we don't have Dig2Decoder converter, so we just store the info
   // Calculate time per sample in nanoseconds: (1000 ns) / (rate in MHz)
   uint32_t timeStepNs = 1000 / adcSamplRateMHz;
 
@@ -738,12 +738,12 @@ void Digitizer1::ProcessDig1RawData(
   if (data.size() > 0) {
     // Create a basic EventData object as placeholder
     auto eventData = std::make_unique<EventData>();
-    eventData->SetChannel(0);
-    eventData->SetTimeStampNs(
+    eventData->channel = 0;
+    eventData->timeStampNs = 
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-    eventData->SetEnergy(1000);
+            .count();
+    eventData->energy = 1000;
 
     eventDataVec.push_back(std::move(eventData));
   }

@@ -14,6 +14,7 @@ namespace Digitizer {
  * 
  * This class represents raw data buffer from a digitizer, containing
  * binary data along with size and event count information.
+ * Uses public-only variables for simplicity and consistency.
  */
 class RawData {
  public:
@@ -22,52 +23,29 @@ class RawData {
   ~RawData() = default;
 
   // Copy semantics
-  RawData(const RawData& other);
-  RawData& operator=(const RawData& other);
+  RawData(const RawData& other) = default;
+  RawData& operator=(const RawData& other) = default;
 
   // Move semantics
-  RawData(RawData&& other) noexcept;
-  RawData& operator=(RawData&& other) noexcept;
+  RawData(RawData&& other) noexcept = default;
+  RawData& operator=(RawData&& other) noexcept = default;
 
-  // Data management
+  // Utility methods
   void Resize(size_t newSize);
   void Clear();
   void Reserve(size_t capacity);
-  
-  // Getters
-  const std::vector<uint8_t>& GetData() const { return data_; }
-  std::vector<uint8_t>& GetData() { return data_; }
-  size_t GetSize() const { return size_; }
-  uint32_t GetNEvents() const { return nEvents_; }
-  size_t GetCapacity() const { return data_.capacity(); }
-  bool IsEmpty() const { return data_.empty(); }
-  
-  // Setters
-  void SetData(std::vector<uint8_t> newData);
-  void SetSize(size_t newSize) { size_ = newSize; }
-  void SetNEvents(uint32_t events) { nEvents_ = events; }
+  bool IsEmpty() const { return data.empty(); }
+  size_t GetCapacity() const { return data.capacity(); }
 
-  // Legacy public access (for backward compatibility)
-  // TODO: Consider deprecating these in favor of getter/setter methods
+  // Public data members (direct access)
   std::vector<uint8_t> data;
-  size_t size;
-  uint32_t nEvents;
-
- private:
-  // Private members (future migration target)
-  std::vector<uint8_t> data_;
-  size_t size_ = 0;
-  uint32_t nEvents_ = 0;
-  
-  // Helper method for copying data
-  void CopyFrom(const RawData& other);
+  size_t size = 0;
+  uint32_t nEvents = 0;
 };
 
-// Modern type alias
+// Type aliases
 using RawData_t = RawData;
-
-// Legacy typedef for backward compatibility
-typedef RawData RAWDATA_t;
+using RAWDATA_t = RawData;  // Legacy compatibility
 
 }  // namespace Digitizer
 }  // namespace DELILA

@@ -1,5 +1,5 @@
-#ifndef RAWTOPSD2_HPP
-#define RAWTOPSD2_HPP
+#ifndef DIG2DECODER_HPP
+#define DIG2DECODER_HPP
 
 #include <cstdint>
 #include <deque>
@@ -8,7 +8,6 @@
 #include <thread>
 #include <vector>
 
-#include "PSD2Data.hpp"
 #include "RawData.hpp"
 #include "EventData.hpp"
 
@@ -22,33 +21,26 @@ enum class DataType {
   Unknown
 };
 
-enum class OutputFormat {
-  PSD2Data,
-  EventData
-};
 
-class RawToPSD2 {
+class Dig2Decoder {
  public:
   // Constructor/Destructor
-  explicit RawToPSD2(uint32_t nThreads = 1);
-  ~RawToPSD2();
+  explicit Dig2Decoder(uint32_t nThreads = 1);
+  ~Dig2Decoder();
 
   // Configuration
   void SetTimeStep(uint32_t timeStep) { fTimeStep = timeStep; }
   void SetDumpFlag(bool dumpFlag) { fDumpFlag = dumpFlag; }
-  void SetOutputFormat(OutputFormat format) { fOutputFormat = format; }
   void SetModuleNumber(uint8_t moduleNumber) { fModuleNumber = moduleNumber; }
 
   // Data Processing
   DataType AddData(std::unique_ptr<RawData_t> rawData);
-  std::unique_ptr<std::vector<std::unique_ptr<PSD2Data_t>>> GetData();
   std::unique_ptr<std::vector<std::unique_ptr<EventData>>> GetEventData();
 
  private:
   // === Configuration ===
   uint32_t fTimeStep = 1;
   bool fDumpFlag = false;
-  OutputFormat fOutputFormat = OutputFormat::EventData;
   uint8_t fModuleNumber = 0;
 
   // === Threading Control ===
@@ -63,9 +55,6 @@ class RawToPSD2 {
   std::mutex fRawDataMutex;
 
   // === Processed Data Storage ===
-  std::unique_ptr<std::vector<std::unique_ptr<PSD2Data_t>>> fPSD2DataVec;
-  std::mutex fPSD2DataMutex;
-  
   std::unique_ptr<std::vector<std::unique_ptr<EventData>>> fEventDataVec;
   std::mutex fEventDataMutex;
 
@@ -86,13 +75,13 @@ class RawToPSD2 {
   bool ValidateDataHeader(uint64_t headerWord, size_t dataSize);
   void ProcessEventData(const std::vector<uint8_t>::iterator& dataStart, 
                        uint32_t totalSize);
-  void DecodeEventPair(const std::vector<uint8_t>::iterator& dataStart,
-                      size_t& wordIndex, PSD2Data_t& psd2Data);
-  void DecodeFirstWord(uint64_t word, PSD2Data_t& psd2Data) const;
-  void DecodeSecondWord(uint64_t word, PSD2Data_t& psd2Data) const;
+  std::unique_ptr<EventData> DecodeEventPair(const std::vector<uint8_t>::iterator& dataStart,
+                                            size_t& wordIndex);
+  void DecodeFirstWord(uint64_t word, EventData& eventData) const;
+  void DecodeSecondWord(uint64_t word, EventData& eventData, uint64_t rawTimeStamp) const;
   void DecodeWaveformData(const std::vector<uint8_t>::iterator& dataStart,
-                         size_t& wordIndex, PSD2Data_t& psd2Data);
-  void DecodeWaveformHeader(uint64_t header, PSD2Data_t& psd2Data) const;
+                         size_t& wordIndex, EventData& eventData);
+  void DecodeWaveformHeader(uint64_t header, EventData& eventData) const;
   
   // Helper struct for waveform configuration
   struct WaveformConfig {
@@ -105,13 +94,11 @@ class RawToPSD2 {
   WaveformConfig ExtractWaveformConfig(uint64_t header) const;
   uint32_t GetMultiplicationFactor(uint32_t encodedValue) const;
   void DecodeWaveformPoint(uint32_t point, size_t dataIndex, 
-                          const WaveformConfig& config, PSD2Data_t& psd2Data) const;
+                          const WaveformConfig& config, EventData& eventData) const;
   
-  // === EventData Conversion ===
-  std::unique_ptr<EventData> ConvertPSD2ToEventData(const PSD2Data_t& psd2Data) const;
 };
 
 }  // namespace Digitizer
 }  // namespace DELILA
 
-#endif  // RAWTOPSD2_HPP
+#endif  // DIG2DECODER_HPP

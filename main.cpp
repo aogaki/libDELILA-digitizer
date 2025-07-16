@@ -95,7 +95,7 @@ int main(int argc, char **argv)
     auto eventData = digitizer.GetEventData();
     if (eventData->size() > 0) {
       eventCounter += eventData->size();
-      std::cout << eventData->back()->GetTimeStampNs() << " Received "
+      std::cout << eventData->back()->timeStampNs << " Received "
                 << eventData->size()
                 << " events (Total: " << (size_t)eventCounter << ")"
                 << std::endl;
