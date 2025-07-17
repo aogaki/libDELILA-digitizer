@@ -38,8 +38,14 @@ char getKey()
 int main(int argc, char **argv)
 {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <config_file>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <config_file> [--save-tree-only]" << std::endl;
+    std::cerr << "  --save-tree-only: Save device tree and exit (no acquisition)" << std::endl;
     return 1;
+  }
+  
+  bool saveTreeOnly = false;
+  if (argc > 2 && std::string(argv[2]) == "--save-tree-only") {
+    saveTreeOnly = true;
   }
 
   TApplication app("app", 0, nullptr);
@@ -60,28 +66,59 @@ int main(int argc, char **argv)
 
   digitizer.PrintDeviceInfo();
 
+  // Save device tree with firmware type detection BEFORE configuration and validation
+  const auto &deviceTree = digitizer.GetDeviceTreeJSON();
+  if (!deviceTree.empty()) {
+    std::string filename = "devTree.json";
+    std::string configFile = argv[1];
+    
+    // Extract firmware type and model from device tree
+    std::string fwType = "unknown";
+    std::string modelName = "unknown";
+    
+    if (deviceTree.contains("par")) {
+      if (deviceTree["par"].contains("fwtype")) {
+        fwType = deviceTree["par"]["fwtype"]["value"];
+      }
+      if (deviceTree["par"].contains("modelname")) {
+        modelName = deviceTree["par"]["modelname"]["value"];
+      }
+    }
+    
+    // Generate filename based on firmware type and model
+    if (fwType != "unknown") {
+      filename = "devTree_" + fwType + "_" + modelName + ".json";
+    } else {
+      // Fallback to config file name detection
+      if (configFile.find("PSD1") != std::string::npos) {
+        filename = "devTree_PSD1.json";
+      } else if (configFile.find("PSD2") != std::string::npos) {
+        filename = "devTree_PSD2.json";
+      } else if (configFile.find("PHA1") != std::string::npos) {
+        filename = "devTree_PHA1.json";
+      } else if (configFile.find("dig1") != std::string::npos) {
+        filename = "devTree_dig1.json";
+      } else if (configFile.find("dig2") != std::string::npos) {
+        filename = "devTree_dig2.json";
+      }
+    }
+
+    std::ofstream file(filename);
+    if (file.is_open()) {
+      file << deviceTree.dump(2);
+      std::cout << "Device tree saved to " << filename << std::endl;
+      std::cout << "Firmware Type: " << fwType << ", Model: " << modelName << std::endl;
+    } else {
+      std::cerr << "Failed to save device tree to " << filename << std::endl;
+    }
+  }
+
   if (!digitizer.Configure()) {
     std::cerr << "Failed to configure digitizer" << std::endl;
     return 1;
   }
 
   std::cout << "Digitizer ready! Press 'q' to quit." << std::endl;
-
-  // Save device tree
-  const auto &deviceTree = digitizer.GetDeviceTreeJSON();
-  if (!deviceTree.empty()) {
-    std::string filename = "devTree.json";
-    if (std::string(argv[1]).find("dig1") != std::string::npos)
-      filename = "devTree1.json";
-    else if (std::string(argv[1]).find("dig2") != std::string::npos)
-      filename = "devTree2.json";
-
-    std::ofstream file(filename);
-    if (file.is_open()) {
-      file << deviceTree.dump(2);
-      std::cout << "Device tree saved to " << filename << std::endl;
-    }
-  }
 
   digitizer.StartAcquisition();
   // Main loop

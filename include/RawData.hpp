@@ -3,32 +3,35 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 #include <utility>
+#include <vector>
 
-namespace DELILA {
-namespace Digitizer {
+namespace DELILA
+{
+namespace Digitizer
+{
 
 /**
  * @brief Raw data container for digitizer data
- * 
+ *
  * This class represents raw data buffer from a digitizer, containing
  * binary data along with size and event count information.
  * Uses public-only variables for simplicity and consistency.
  */
-class RawData {
+class RawData
+{
  public:
   // Constructors and Destructor
   explicit RawData(size_t dataSize = 0);
   ~RawData() = default;
 
   // Copy semantics
-  RawData(const RawData& other) = default;
-  RawData& operator=(const RawData& other) = default;
+  RawData(const RawData &other) = default;
+  RawData &operator=(const RawData &other) = default;
 
   // Move semantics
-  RawData(RawData&& other) noexcept = default;
-  RawData& operator=(RawData&& other) noexcept = default;
+  RawData(RawData &&other) noexcept = default;
+  RawData &operator=(RawData &&other) noexcept = default;
 
   // Utility methods
   void Resize(size_t newSize);

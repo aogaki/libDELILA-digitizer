@@ -41,7 +41,6 @@ class EventData
   void PrintSummary() const;
   void PrintWaveform(size_t maxSamples = 10) const;
 
-
   // Public data members
   double timeStampNs;
   size_t waveformSize;
@@ -63,17 +62,17 @@ class EventData
   uint8_t digitalProbe3Type;
   uint8_t digitalProbe4Type;
   uint8_t downSampleFactor;
-  
+
   // NEW: Flags field for status information (dig1/dig2)
   uint64_t flags;
-  
+
   // Flag bit definitions for PSD1/PSD2
-  static constexpr uint64_t FLAG_PILEUP        = 0x01;  // Pileup detected
-  static constexpr uint64_t FLAG_TRIGGER_LOST  = 0x02;  // Trigger lost
-  static constexpr uint64_t FLAG_OVER_RANGE    = 0x04;  // Signal saturation
-  static constexpr uint64_t FLAG_1024_TRIGGER  = 0x08;  // 1024 trigger count
-  static constexpr uint64_t FLAG_N_LOST_TRIGGER = 0x10; // N lost triggers
-  
+  static constexpr uint64_t FLAG_PILEUP = 0x01;          // Pileup detected
+  static constexpr uint64_t FLAG_TRIGGER_LOST = 0x02;    // Trigger lost
+  static constexpr uint64_t FLAG_OVER_RANGE = 0x04;      // Signal saturation
+  static constexpr uint64_t FLAG_1024_TRIGGER = 0x08;    // 1024 trigger count
+  static constexpr uint64_t FLAG_N_LOST_TRIGGER = 0x10;  // N lost triggers
+
   // Optional: Helper methods for flag checking
   bool HasPileup() const { return (flags & FLAG_PILEUP) != 0; }
   bool HasTriggerLost() const { return (flags & FLAG_TRIGGER_LOST) != 0; }

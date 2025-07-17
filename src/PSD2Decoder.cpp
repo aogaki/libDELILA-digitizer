@@ -1,4 +1,4 @@
-#include "Dig2Decoder.hpp"
+#include "PSD2Decoder.hpp"
 
 #include <algorithm>
 #include <bitset>
@@ -8,76 +8,20 @@
 #include <iostream>
 #include <thread>
 
+using namespace DELILA::Digitizer::PSD2Constants;
+
 namespace DELILA
 {
 namespace Digitizer
 {
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-constexpr size_t kWordSize = 8;  // 64-bit word size in bytes
-
-// Header bit masks and positions
-constexpr uint64_t kHeaderTypeMask = 0xF;
-constexpr int kHeaderTypeShift = 60;
-constexpr uint64_t kHeaderTypeData = 0x2;
-
-constexpr int kFailCheckShift = 56;
-constexpr uint64_t kFailCheckMask = 0x1;
-
-constexpr int kAggregateCounterShift = 32;
-constexpr uint64_t kAggregateCounterMask = 0xFFFF;
-
-constexpr uint64_t kTotalSizeMask = 0xFFFFFFFF;
-
-// Event bit masks and positions
-constexpr int kChannelShift = 56;
-constexpr uint64_t kChannelMask = 0x7F;
-
-constexpr uint64_t kTimeStampMask = 0xFFFFFFFFFFFF;
-
-constexpr int kLastWordShift = 63;
-constexpr int kWaveformFlagShift = 62;
-
-constexpr int kFlagsLowPriorityShift = 50;
-constexpr uint64_t kFlagsLowPriorityMask = 0x7FF;
-
-constexpr int kFlagsHighPriorityShift = 42;
-constexpr uint64_t kFlagsHighPriorityMask = 0xFF;
-
-constexpr int kEnergyShortShift = 26;
-constexpr uint64_t kEnergyShortMask = 0xFFFF;
-
-constexpr int kFineTimeShift = 16;
-constexpr uint64_t kFineTimeMask = 0x3FF;
-constexpr double kFineTimeScale = 1024.0;
-
-constexpr uint64_t kEnergyMask = 0xFFFF;
-
-// Waveform header bit masks
-constexpr int kWaveformCheck1Shift = 63;
-constexpr int kWaveformCheck2Shift = 60;
-constexpr uint64_t kWaveformCheck2Mask = 0x7;
-
-constexpr int kTimeResolutionShift = 44;
-constexpr uint64_t kTimeResolutionMask = 0x3;
-
-constexpr int kTriggerThresholdShift = 28;
-constexpr uint64_t kTriggerThresholdMask = 0xFFFF;
-
-constexpr uint64_t kWaveformWordsMask = 0xFFF;
-
-// Probe configuration bit positions
-constexpr uint64_t kAnalogProbeMask = 0x3FFF;
-constexpr uint64_t kDigitalProbeMask = 0x1;
+// Constants are now defined in PSD2Constants.hpp
 
 // ============================================================================
 // Constructor/Destructor
 // ============================================================================
 
-Dig2Decoder::Dig2Decoder(uint32_t nThreads)
+PSD2Decoder::PSD2Decoder(uint32_t nThreads)
 {
   if (nThreads < 1) {
     nThreads = 1;
@@ -90,11 +34,11 @@ Dig2Decoder::Dig2Decoder(uint32_t nThreads)
   fDecodeFlag = true;
   fDecodeThreads.reserve(nThreads);
   for (uint32_t i = 0; i < nThreads; ++i) {
-    fDecodeThreads.emplace_back(&Dig2Decoder::DecodeThread, this);
+    fDecodeThreads.emplace_back(&PSD2Decoder::DecodeThread, this);
   }
 }
 
-Dig2Decoder::~Dig2Decoder()
+PSD2Decoder::~PSD2Decoder()
 {
   // Signal threads to stop
   fDecodeFlag = false;
@@ -111,9 +55,8 @@ Dig2Decoder::~Dig2Decoder()
 // Data Access
 // ============================================================================
 
-
 std::unique_ptr<std::vector<std::unique_ptr<EventData>>>
-Dig2Decoder::GetEventData()
+PSD2Decoder::GetEventData()
 {
   auto data = std::make_unique<std::vector<std::unique_ptr<EventData>>>();
   {
@@ -128,7 +71,7 @@ Dig2Decoder::GetEventData()
 // Threading and Data Processing
 // ============================================================================
 
-void Dig2Decoder::DecodeThread()
+void PSD2Decoder::DecodeThread()
 {
   while (fDecodeFlag) {
     std::unique_ptr<RawData_t> rawData = nullptr;
@@ -137,10 +80,17 @@ void Dig2Decoder::DecodeThread()
     {
       std::lock_guard<std::mutex> lock(fRawDataMutex);
       if (fRawDataQueue.empty()) {
-        continue;
+        // Release lock before sleeping to avoid deadlock
+      } else {
+        rawData = std::move(fRawDataQueue.front());
+        fRawDataQueue.pop_front();
       }
-      rawData = std::move(fRawDataQueue.front());
-      fRawDataQueue.pop_front();
+    }
+    
+    // Sleep outside the lock if no data was available
+    if (!rawData) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      continue;
     }
 
     // Process data if available
@@ -150,7 +100,7 @@ void Dig2Decoder::DecodeThread()
   }
 }
 
-void Dig2Decoder::DecodeData(std::unique_ptr<RawData_t> rawData)
+void PSD2Decoder::DecodeData(std::unique_ptr<RawData_t> rawData)
 {
   if (fDumpFlag) {
     DumpRawData(*rawData);
@@ -165,13 +115,13 @@ void Dig2Decoder::DecodeData(std::unique_ptr<RawData_t> rawData)
   }
 
   // Extract total size from header
-  auto totalSize = static_cast<uint32_t>(headerWord & kTotalSizeMask);
+  auto totalSize = static_cast<uint32_t>(headerWord & Header::kTotalSizeMask);
 
   // Process all events in the data
   ProcessEventData(rawData->data.begin(), totalSize);
 }
 
-void Dig2Decoder::DumpRawData(const RawData_t &rawData) const
+void PSD2Decoder::DumpRawData(const RawData_t &rawData) const
 {
   std::cout << "Data size: " << rawData.size << std::endl;
   for (size_t i = 0; i < rawData.size; i += kWordSize) {
@@ -181,25 +131,25 @@ void Dig2Decoder::DumpRawData(const RawData_t &rawData) const
   }
 }
 
-bool Dig2Decoder::ValidateDataHeader(uint64_t headerWord, size_t dataSize)
+bool PSD2Decoder::ValidateDataHeader(uint64_t headerWord, size_t dataSize)
 {
   // Check header type
-  auto headerType = (headerWord >> kHeaderTypeShift) & kHeaderTypeMask;
-  if (headerType != kHeaderTypeData) {
+  auto headerType = (headerWord >> Header::kTypeShift) & Header::kTypeMask;
+  if (headerType != Header::kTypeData) {
     std::cerr << "Invalid header type: 0x" << std::hex << headerType << std::dec
               << std::endl;
     return false;
   }
 
   // Check fail bit
-  auto failCheck = (headerWord >> kFailCheckShift) & kFailCheckMask;
+  auto failCheck = (headerWord >> Header::kFailCheckShift) & Header::kFailCheckMask;
   if (failCheck) {
     std::cerr << "Board fail bit set" << std::endl;
   }
 
   // Validate aggregate counter for single-threaded mode
   auto aggregateCounter =
-      (headerWord >> kAggregateCounterShift) & kAggregateCounterMask;
+      (headerWord >> Header::kAggregateCounterShift) & Header::kAggregateCounterMask;
   if (fDecodeThreads.size() == 1) {
     if (aggregateCounter != 0 && aggregateCounter != fLastCounter + 1) {
       std::cerr << "Aggregate counter discontinuity: " << fLastCounter << " -> "
@@ -209,7 +159,7 @@ bool Dig2Decoder::ValidateDataHeader(uint64_t headerWord, size_t dataSize)
   }
 
   // Validate total size
-  auto totalSize = static_cast<uint32_t>(headerWord & kTotalSizeMask);
+  auto totalSize = static_cast<uint32_t>(headerWord & Header::kTotalSizeMask);
   if (totalSize * kWordSize != dataSize) {
     std::cerr << "Size mismatch: header=" << totalSize * kWordSize
               << " actual=" << dataSize << std::endl;
@@ -218,7 +168,7 @@ bool Dig2Decoder::ValidateDataHeader(uint64_t headerWord, size_t dataSize)
   return true;
 }
 
-void Dig2Decoder::ProcessEventData(
+void PSD2Decoder::ProcessEventData(
     const std::vector<uint8_t>::iterator &dataStart, uint32_t totalSize)
 {
   // Direct EventData output
@@ -250,8 +200,8 @@ void Dig2Decoder::ProcessEventData(
   }
 }
 
-std::unique_ptr<EventData> Dig2Decoder::DecodeEventPair(const std::vector<uint8_t>::iterator &dataStart,
-                                                       size_t &wordIndex)
+std::unique_ptr<EventData> PSD2Decoder::DecodeEventPair(
+    const std::vector<uint8_t>::iterator &dataStart, size_t &wordIndex)
 {
   // Read first word (channel and timestamp)
   uint64_t firstWord = 0;
@@ -266,7 +216,7 @@ std::unique_ptr<EventData> Dig2Decoder::DecodeEventPair(const std::vector<uint8_
   wordIndex++;
 
   // Check for waveform data to determine size
-  bool hasWaveform = (secondWord >> kWaveformFlagShift) & 0x1;
+  bool hasWaveform = (secondWord >> Event::kWaveformFlagShift) & 0x1;
   size_t waveformSize = 0;
   if (hasWaveform) {
     // Peek at waveform header to get size
@@ -276,15 +226,15 @@ std::unique_ptr<EventData> Dig2Decoder::DecodeEventPair(const std::vector<uint8_
     uint64_t nWordsWaveform = 0;
     std::memcpy(&nWordsWaveform, &(*(dataStart + (wordIndex + 2) * kWordSize)),
                 sizeof(uint64_t));
-    nWordsWaveform &= kWaveformWordsMask;
-    waveformSize = nWordsWaveform * 2; // 2 points per word
+    nWordsWaveform &= Waveform::kWaveformWordsMask;
+    waveformSize = nWordsWaveform * 2;  // 2 points per word
   }
 
   // Create EventData with proper size
   auto eventData = std::make_unique<EventData>(waveformSize);
 
   // Extract raw timestamp from first word
-  uint64_t rawTimeStamp = firstWord & kTimeStampMask;
+  uint64_t rawTimeStamp = firstWord & Event::kTimeStampMask;
 
   // Decode first word
   DecodeFirstWord(firstWord, *eventData);
@@ -303,35 +253,41 @@ std::unique_ptr<EventData> Dig2Decoder::DecodeEventPair(const std::vector<uint8_
   return eventData;
 }
 
-void Dig2Decoder::DecodeFirstWord(uint64_t word, EventData &eventData) const
+void PSD2Decoder::DecodeFirstWord(uint64_t word, EventData &eventData) const
 {
   // Extract channel
-  eventData.channel = (word >> kChannelShift) & kChannelMask;
+  eventData.channel = (word >> Event::kChannelShift) & Event::kChannelMask;
 
   // Extract raw timestamp (store in temporary variable for debugging)
-  uint64_t rawTimeStamp = word & kTimeStampMask;
+  uint64_t rawTimeStamp = word & Event::kTimeStampMask;
 
   if (fDumpFlag) {
-    std::cout << "Channel: " << static_cast<int>(eventData.channel) << std::endl;
+    std::cout << "Channel: " << static_cast<int>(eventData.channel)
+              << std::endl;
     std::cout << "Time stamp (raw): " << rawTimeStamp << std::endl;
   }
 }
 
-void Dig2Decoder::DecodeSecondWord(uint64_t word, EventData &eventData, uint64_t rawTimeStamp) const
+void PSD2Decoder::DecodeSecondWord(uint64_t word, EventData &eventData,
+                                   uint64_t rawTimeStamp) const
 {
   // Extract flags and store in 64-bit flags field
-  uint64_t flagsLowPriority = (word >> kFlagsLowPriorityShift) & kFlagsLowPriorityMask;
-  uint64_t flagsHighPriority = (word >> kFlagsHighPriorityShift) & kFlagsHighPriorityMask;
-  eventData.flags = (flagsHighPriority << 11) | flagsLowPriority; // Combine into single field
+  uint64_t flagsLowPriority =
+      (word >> Event::kFlagsLowPriorityShift) & Event::kFlagsLowPriorityMask;
+  uint64_t flagsHighPriority =
+      (word >> Event::kFlagsHighPriorityShift) & Event::kFlagsHighPriorityMask;
+  eventData.flags = (flagsHighPriority << 11) |
+                    flagsLowPriority;  // Combine into single field
 
   // Extract energies
-  eventData.energyShort = (word >> kEnergyShortShift) & kEnergyShortMask;
-  eventData.energy = word & kEnergyMask;
+  eventData.energyShort = (word >> Event::kEnergyShortShift) & Event::kEnergyShortMask;
+  eventData.energy = word & Event::kEnergyMask;
 
   // Calculate precise timestamp with fine time correction
-  uint64_t fineTime = (word >> kFineTimeShift) & kFineTimeMask;
+  uint64_t fineTime = (word >> Event::kFineTimeShift) & Event::kFineTimeMask;
   double coarseTimeNs = static_cast<double>(rawTimeStamp) * fTimeStep;
-  double fineTimeNs = (static_cast<double>(fineTime) / kFineTimeScale) * fTimeStep;
+  double fineTimeNs =
+      (static_cast<double>(fineTime) / Event::kFineTimeScale) * fTimeStep;
   eventData.timeStampNs = coarseTimeNs + fineTimeNs;
 
   if (fDumpFlag) {
@@ -339,12 +295,13 @@ void Dig2Decoder::DecodeSecondWord(uint64_t word, EventData &eventData, uint64_t
     std::cout << "Short gate: " << eventData.energyShort << std::endl;
     std::cout << "Energy: " << eventData.energy << std::endl;
     std::cout << std::fixed << std::setprecision(3);
-    std::cout << "Final timestamp: " << eventData.timeStampNs << " ns" << std::endl;
+    std::cout << "Final timestamp: " << eventData.timeStampNs << " ns"
+              << std::endl;
     std::cout << std::defaultfloat;
   }
 }
 
-void Dig2Decoder::DecodeWaveformData(
+void PSD2Decoder::DecodeWaveformData(
     const std::vector<uint8_t>::iterator &dataStart, size_t &wordIndex,
     EventData &eventData)
 {
@@ -356,8 +313,8 @@ void Dig2Decoder::DecodeWaveformData(
 
   // Validate waveform header
   bool headerValid =
-      ((waveformHeader >> kWaveformCheck1Shift) & 0x1) == 0x1 &&
-      ((waveformHeader >> kWaveformCheck2Shift) & kWaveformCheck2Mask) == 0x0;
+      ((waveformHeader >> Waveform::kWaveformCheck1Shift) & 0x1) == 0x1 &&
+      ((waveformHeader >> Waveform::kWaveformCheck2Shift) & Waveform::kWaveformCheck2Mask) == 0x0;
   if (!headerValid) {
     std::cerr << "Invalid waveform header" << std::endl;
   }
@@ -373,13 +330,13 @@ void Dig2Decoder::DecodeWaveformData(
   std::memcpy(&nWordsWaveform, &(*(dataStart + wordIndex * kWordSize)),
               sizeof(uint64_t));
   wordIndex++;
-  nWordsWaveform &= kWaveformWordsMask;
+  nWordsWaveform &= Waveform::kWaveformWordsMask;
 
   // EventData is already properly sized, verify it matches
   size_t expectedSize = nWordsWaveform * 2;
   if (eventData.waveformSize != expectedSize) {
-    std::cerr << "Waveform size mismatch: expected " << expectedSize
-              << ", got " << eventData.waveformSize << std::endl;
+    std::cerr << "Waveform size mismatch: expected " << expectedSize << ", got "
+              << eventData.waveformSize << std::endl;
   }
 
   // Decode waveform data
@@ -398,11 +355,11 @@ void Dig2Decoder::DecodeWaveformData(
   }
 }
 
-void Dig2Decoder::DecodeWaveformHeader(uint64_t header,
-                                      EventData &eventData) const
+void PSD2Decoder::DecodeWaveformHeader(uint64_t header,
+                                       EventData &eventData) const
 {
   // Extract time resolution
-  auto timeResolution = (header >> kTimeResolutionShift) & kTimeResolutionMask;
+  auto timeResolution = (header >> Waveform::kTimeResolutionShift) & Waveform::kTimeResolutionMask;
   eventData.downSampleFactor = 1 << timeResolution;  // 1, 2, 4, or 8
 
   // Extract probe types
@@ -414,7 +371,7 @@ void Dig2Decoder::DecodeWaveformHeader(uint64_t header,
   eventData.analogProbe1Type = static_cast<uint8_t>(header & 0x7);
 }
 
-Dig2Decoder::WaveformConfig Dig2Decoder::ExtractWaveformConfig(
+PSD2Decoder::WaveformConfig PSD2Decoder::ExtractWaveformConfig(
     uint64_t header) const
 {
   WaveformConfig config;
@@ -430,7 +387,7 @@ Dig2Decoder::WaveformConfig Dig2Decoder::ExtractWaveformConfig(
   return config;
 }
 
-uint32_t Dig2Decoder::GetMultiplicationFactor(uint32_t encodedValue) const
+uint32_t PSD2Decoder::GetMultiplicationFactor(uint32_t encodedValue) const
 {
   switch (encodedValue) {
     case 0:
@@ -446,13 +403,13 @@ uint32_t Dig2Decoder::GetMultiplicationFactor(uint32_t encodedValue) const
   }
 }
 
-void Dig2Decoder::DecodeWaveformPoint(uint32_t point, size_t dataIndex,
-                                     const WaveformConfig &config,
-                                     EventData &eventData) const
+void PSD2Decoder::DecodeWaveformPoint(uint32_t point, size_t dataIndex,
+                                      const WaveformConfig &config,
+                                      EventData &eventData) const
 {
   // Decode analog probes
-  uint32_t analog1Raw = point & kAnalogProbeMask;
-  uint32_t analog2Raw = (point >> 16) & kAnalogProbeMask;
+  uint32_t analog1Raw = point & Waveform::kAnalogProbeMask;
+  uint32_t analog2Raw = (point >> 16) & Waveform::kAnalogProbeMask;
 
   if (config.ap1IsSigned) {
     // Sign extend from 14-bit to 32-bit
@@ -473,17 +430,17 @@ void Dig2Decoder::DecodeWaveformPoint(uint32_t point, size_t dataIndex,
   }
 
   // Decode digital probes
-  eventData.digitalProbe1[dataIndex] = (point >> 14) & kDigitalProbeMask;
-  eventData.digitalProbe2[dataIndex] = (point >> 15) & kDigitalProbeMask;
-  eventData.digitalProbe3[dataIndex] = (point >> 30) & kDigitalProbeMask;
-  eventData.digitalProbe4[dataIndex] = (point >> 31) & kDigitalProbeMask;
+  eventData.digitalProbe1[dataIndex] = (point >> 14) & Waveform::kDigitalProbeMask;
+  eventData.digitalProbe2[dataIndex] = (point >> 15) & Waveform::kDigitalProbeMask;
+  eventData.digitalProbe3[dataIndex] = (point >> 30) & Waveform::kDigitalProbeMask;
+  eventData.digitalProbe4[dataIndex] = (point >> 31) & Waveform::kDigitalProbeMask;
 }
 
 // ============================================================================
 // Data Input and Classification
 // ============================================================================
 
-DataType Dig2Decoder::AddData(std::unique_ptr<RawData_t> rawData)
+DataType PSD2Decoder::AddData(std::unique_ptr<RawData_t> rawData)
 {
   constexpr uint32_t oneWordSize = kWordSize;
   if (rawData->size % oneWordSize != 0) {
@@ -520,7 +477,7 @@ DataType Dig2Decoder::AddData(std::unique_ptr<RawData_t> rawData)
 // Data Type Detection
 // ============================================================================
 
-DataType Dig2Decoder::CheckDataType(std::unique_ptr<RawData_t> &rawData)
+DataType PSD2Decoder::CheckDataType(std::unique_ptr<RawData_t> &rawData)
 {
   if (rawData->size < 3 * kWordSize) {
     return DataType::Unknown;
@@ -541,7 +498,7 @@ DataType Dig2Decoder::CheckDataType(std::unique_ptr<RawData_t> &rawData)
 // Specific Data Type Checkers
 // ============================================================================
 
-bool Dig2Decoder::CheckStop(std::unique_ptr<RawData_t> &rawData)
+bool PSD2Decoder::CheckStop(std::unique_ptr<RawData_t> &rawData)
 {
   uint64_t buf = 0;
   // The first word bit[60:63] = 0x3
@@ -568,7 +525,7 @@ bool Dig2Decoder::CheckStop(std::unique_ptr<RawData_t> &rawData)
   return false;
 }
 
-bool Dig2Decoder::CheckStart(std::unique_ptr<RawData_t> &rawData)
+bool PSD2Decoder::CheckStart(std::unique_ptr<RawData_t> &rawData)
 {
   uint64_t buf = 0;
   // The first word bit[60:63] = 0x3
@@ -595,7 +552,6 @@ bool Dig2Decoder::CheckStart(std::unique_ptr<RawData_t> &rawData)
 
   return false;
 }
-
 
 }  // namespace Digitizer
 }  // namespace DELILA

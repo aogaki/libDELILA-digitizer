@@ -10,11 +10,11 @@
 #include <vector>
 
 #include "ConfigurationManager.hpp"
+#include "PSD2Decoder.hpp"
 #include "EventData.hpp"
 #include "IDigitizer.hpp"
 #include "ParameterValidator.hpp"
 #include "RawData.hpp"
-#include "Dig2Decoder.hpp"
 
 namespace DELILA
 {
@@ -35,12 +35,16 @@ class Digitizer2 : public IDigitizer
   bool StopAcquisition() override;
 
   // Data access
-  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> GetEventData() override;
+  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> GetEventData()
+      override;
 
   // Device information
-  const nlohmann::json &GetDeviceTreeJSON() const override { return fDeviceTree; }
+  const nlohmann::json &GetDeviceTreeJSON() const override
+  {
+    return fDeviceTree;
+  }
   void PrintDeviceInfo() override;
-  DigitizerType GetType() const override { return fDigitizerType; }
+  FirmwareType GetType() const override { return fFirmwareType; }
 
   // Control methods
   bool SendSWTrigger() override;
@@ -66,15 +70,14 @@ class Digitizer2 : public IDigitizer
 
   // === Device Information ===
   nlohmann::json fDeviceTree;
-  DigitizerType fDigitizerType = DigitizerType::UNKNOWN;
+  FirmwareType fFirmwareType = FirmwareType::UNKNOWN;
 
   // === Data Processing ===
-  std::unique_ptr<Dig2Decoder> fDig2Decoder;
+  std::unique_ptr<PSD2Decoder> fPSD2Decoder;
   std::unique_ptr<ParameterValidator> fParameterValidator;
   bool fDataTakingFlag = false;
   std::vector<std::thread> fReadDataThreads;
   std::mutex fReadDataMutex;
-
 
   // === Event Data Processing ===
   // Note: Event data processing is now handled by Dig2Decoder
@@ -89,7 +92,7 @@ class Digitizer2 : public IDigitizer
 
   // === Device Tree Management ===
   std::string GetDeviceTree();
-  void DetermineDigitizerType();
+  void DetermineFirmwareType();
 
   // === Configuration Validation ===
   bool ValidateParameters();

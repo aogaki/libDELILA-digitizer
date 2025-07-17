@@ -10,16 +10,24 @@
 #include <vector>
 
 #include "ConfigurationManager.hpp"
+#include "IDecoder.hpp"
+#include "PHA1Decoder.hpp"
+#include "PSD1Decoder.hpp"
 #include "EventData.hpp"
 #include "IDigitizer.hpp"
 #include "ParameterValidator.hpp"
 #include "RawData.hpp"
-#include "Dig1Decoder.hpp"
 
 namespace DELILA
 {
 namespace Digitizer
 {
+
+enum class DigitizerModel {
+  UNKNOWN,
+  X725,
+  X730
+};
 
 class Digitizer1 : public IDigitizer
 {
@@ -35,12 +43,16 @@ class Digitizer1 : public IDigitizer
   bool StopAcquisition() override;
 
   // Data access
-  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> GetEventData() override;
+  std::unique_ptr<std::vector<std::unique_ptr<EventData>>> GetEventData()
+      override;
 
   // Device information
-  const nlohmann::json &GetDeviceTreeJSON() const override { return fDeviceTree; }
+  const nlohmann::json &GetDeviceTreeJSON() const override
+  {
+    return fDeviceTree;
+  }
   void PrintDeviceInfo() override;
-  DigitizerType GetType() const override { return fDigitizerType; }
+  FirmwareType GetType() const override { return fFirmwareType; }
 
   // Control methods
   bool SendSWTrigger() override;
@@ -66,10 +78,11 @@ class Digitizer1 : public IDigitizer
 
   // === Device Information ===
   nlohmann::json fDeviceTree;
-  DigitizerType fDigitizerType = DigitizerType::UNKNOWN;
+  FirmwareType fFirmwareType = FirmwareType::UNKNOWN;
+  DigitizerModel fDigitizerModel = DigitizerModel::UNKNOWN;
 
   // === Data Processing ===
-  std::unique_ptr<Dig1Decoder> fDig1Decoder;
+  std::unique_ptr<IDecoder> fDecoder;
   std::unique_ptr<ParameterValidator> fParameterValidator;
   bool fDataTakingFlag = false;
   std::vector<std::thread> fReadDataThreads;
@@ -85,7 +98,7 @@ class Digitizer1 : public IDigitizer
 
   // === Device Tree Management ===
   std::string GetDeviceTree();
-  void DetermineDigitizerType();
+  void DetermineFirmwareType();
 
   // === Configuration Validation ===
   bool ValidateParameters();
@@ -96,6 +109,7 @@ class Digitizer1 : public IDigitizer
   bool ConfigureRecordLength();
   bool ConfigureMaxRawDataSize();
   bool ConfigureSampleRate();
+  bool EnableFineTimestamp();
 
   // === Data Acquisition ===
   bool EndpointConfigure();
@@ -106,9 +120,10 @@ class Digitizer1 : public IDigitizer
   // === EventData Conversion (Dig1-specific) ===
   void EventConversionThread();
   std::unique_ptr<EventData> ConvertRawToEventData(const RawData_t &rawData);
-  void ProcessDig1RawData(const std::vector<uint8_t> &data, 
-                          std::vector<std::unique_ptr<EventData>> &eventDataVec);
-  void DecodeDig1Event(const std::vector<uint8_t>::const_iterator &dataStart, 
+  void ProcessDig1RawData(
+      const std::vector<uint8_t> &data,
+      std::vector<std::unique_ptr<EventData>> &eventDataVec);
+  void DecodeDig1Event(const std::vector<uint8_t>::const_iterator &dataStart,
                        size_t &wordIndex, EventData &eventData);
 };
 

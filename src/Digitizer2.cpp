@@ -189,13 +189,13 @@ bool Digitizer2::ConfigureMaxRawDataSize()
 
 bool Digitizer2::InitializeDataConverter()
 {
-  // Create Dig2Decoder converter if not already created
-  if (!fDig2Decoder) {
-    fDig2Decoder = std::make_unique<Dig2Decoder>(fNThreads);
+  // Create PSD2Decoder converter if not already created
+  if (!fPSD2Decoder) {
+    fPSD2Decoder = std::make_unique<PSD2Decoder>(fNThreads);
   }
 
-  fDig2Decoder->SetDumpFlag(fDebugFlag);
-  fDig2Decoder->SetModuleNumber(fModuleNumber);
+  fPSD2Decoder->SetDumpFlag(fDebugFlag);
+  fPSD2Decoder->SetModuleNumber(fModuleNumber);
   return true;
 }
 
@@ -216,7 +216,7 @@ bool Digitizer2::ConfigureSampleRate()
 
   // Calculate time per sample in nanoseconds: (1000 ns) / (rate in MHz)
   uint32_t timeStepNs = 1000 / adcSamplRateMHz;
-  fDig2Decoder->SetTimeStep(timeStepNs);
+  fPSD2Decoder->SetTimeStep(timeStepNs);
 
   std::cout << "ADC Sample Rate: " << adcSamplRateMHz << " MHz" << std::endl;
   std::cout << "Time step: " << timeStepNs << " ns per sample" << std::endl;
@@ -288,7 +288,7 @@ bool Digitizer2::StopAcquisition()
   // Stop EventData conversion thread
   fDataTakingFlag = false;  // This will stop conversion thread too
 
-  // Dig2Decoder will stop automatically when threads join
+  // PSD2Decoder will stop automatically when threads join
 
   return status;
 }
@@ -317,8 +317,10 @@ bool Digitizer2::CheckStatus()
 std::unique_ptr<std::vector<std::unique_ptr<EventData>>>
 Digitizer2::GetEventData()
 {
-  // Get EventData directly from Dig2Decoder
-  return fDig2Decoder ? fDig2Decoder->GetEventData() : std::make_unique<std::vector<std::unique_ptr<EventData>>>();
+  // Get EventData directly from PSD2Decoder
+  return fPSD2Decoder
+             ? fPSD2Decoder->GetEventData()
+             : std::make_unique<std::vector<std::unique_ptr<EventData>>>();
 }
 
 // ============================================================================
@@ -373,10 +375,10 @@ void Digitizer2::ReadDataThread()
     auto err = ReadDataWithLock(rawData, timeOut);
 
     if (err == CAEN_FELib_Success) {
-      // Add data through Dig2Decoder converter ONLY
-      // Data will be converted directly by Dig2Decoder
-      if (fDig2Decoder) {
-        fDig2Decoder->AddData(std::move(rawData));
+      // Add data through PSD2Decoder converter ONLY
+      // Data will be converted directly by PSD2Decoder
+      if (fPSD2Decoder) {
+        fPSD2Decoder->AddData(std::move(rawData));
       }
       rawData = std::make_unique<RawData_t>(fMaxRawDataSize);
     } else if (err == CAEN_FELib_Timeout) {
@@ -472,9 +474,34 @@ bool Digitizer2::SetParameter(const std::string &path, const std::string &value)
 bool Digitizer2::Open(const std::string &url)
 {
   std::cout << "Open URL: " << url << std::endl;
-  auto err = CAEN_FELib_Open(url.c_str(), &fHandle);
-  CheckError(err);
-  return err == CAEN_FELib_Success;
+  
+  // Try CAEN_FELib_Open up to 3 times
+  constexpr int maxRetries = 3;
+  int err = static_cast<int>(CAEN_FELib_InternalError);
+  
+  for (int attempt = 1; attempt <= maxRetries; ++attempt) {
+    std::cout << "Attempt " << attempt << " of " << maxRetries << std::endl;
+    
+    err = CAEN_FELib_Open(url.c_str(), &fHandle);
+    
+    if (err == CAEN_FELib_Success) {
+      std::cout << "Successfully opened digitizer on attempt " << attempt << std::endl;
+      return true;
+    }
+    
+    // Log error for this attempt
+    std::cout << "Attempt " << attempt << " failed: ";
+    CheckError(err);
+    
+    // Wait before retry (except on last attempt)
+    if (attempt < maxRetries) {
+      std::cout << "Waiting 1 second before retry..." << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+  
+  std::cout << "All " << maxRetries << " attempts failed" << std::endl;
+  return false;
 }
 
 bool Digitizer2::Close()
@@ -507,7 +534,7 @@ std::string Digitizer2::GetDeviceTree()
   try {
     fDeviceTree = nlohmann::json::parse(jsonStr);
     // Determine digitizer type after parsing device tree
-    DetermineDigitizerType();
+    DetermineFirmwareType();
     // Create parameter validator with device tree
     fParameterValidator = std::make_unique<ParameterValidator>(fDeviceTree);
   } catch (const nlohmann::json::parse_error &e) {
@@ -518,9 +545,9 @@ std::string Digitizer2::GetDeviceTree()
   return jsonStr;
 }
 
-void Digitizer2::DetermineDigitizerType()
+void Digitizer2::DetermineFirmwareType()
 {
-  fDigitizerType = DigitizerType::UNKNOWN;  // Default
+  fFirmwareType = FirmwareType::UNKNOWN;  // Default
 
   if (!fDeviceTree.contains("par")) {
     return;
@@ -552,9 +579,9 @@ void Digitizer2::DetermineDigitizerType()
   if (fwType.find("psd") != std::string::npos) {
     // Check for DPP_PSD (underscore) = PSD2, DPP-PSD (hyphen) = PSD1
     if (fwType.find("dpp_psd") != std::string::npos) {
-      fDigitizerType = DigitizerType::PSD2;
+      fFirmwareType = FirmwareType::PSD2;
     } else if (fwType.find("dpp-psd") != std::string::npos) {
-      fDigitizerType = DigitizerType::PSD1;
+      fFirmwareType = FirmwareType::PSD1;
     } else {
       // Fall back to model name logic for PSD - extract 4-digit number
       std::string modelNumber = "";
@@ -564,17 +591,17 @@ void Digitizer2::DetermineDigitizerType()
         }
       }
       if (modelNumber.length() >= 4 && modelNumber[0] == '2') {
-        fDigitizerType = DigitizerType::PSD2;
+        fFirmwareType = FirmwareType::PSD2;
       } else {
-        fDigitizerType = DigitizerType::PSD1;
+        fFirmwareType = FirmwareType::PSD1;
       }
     }
   } else if (fwType.find("pha") != std::string::npos) {
     // Similar logic for PHA
     if (fwType.find("dpp_pha") != std::string::npos) {
-      fDigitizerType = DigitizerType::PHA2;
+      fFirmwareType = FirmwareType::PHA2;
     } else if (fwType.find("dpp-pha") != std::string::npos) {
-      fDigitizerType = DigitizerType::PHA1;
+      fFirmwareType = FirmwareType::PHA1;
     } else {
       // Fall back to model name logic for PHA - extract 4-digit number
       std::string modelNumber = "";
@@ -584,22 +611,22 @@ void Digitizer2::DetermineDigitizerType()
         }
       }
       if (modelNumber.length() >= 4 && modelNumber[0] == '2') {
-        fDigitizerType = DigitizerType::PHA2;
+        fFirmwareType = FirmwareType::PHA2;
       } else {
-        fDigitizerType = DigitizerType::PHA1;
+        fFirmwareType = FirmwareType::PHA1;
       }
     }
   } else if (fwType.find("qdc") != std::string::npos) {
-    fDigitizerType = DigitizerType::QDC1;
+    fFirmwareType = FirmwareType::QDC1;
   } else if (fwType.find("scope") != std::string::npos ||
              fwType.find("oscilloscope") != std::string::npos) {
     // Similar logic for SCOPE
     if (fwType.find("dpp_scope") != std::string::npos ||
         fwType.find("scope_dpp") != std::string::npos) {
-      fDigitizerType = DigitizerType::SCOPE2;
+      fFirmwareType = FirmwareType::SCOPE2;
     } else if (fwType.find("dpp-scope") != std::string::npos ||
                fwType.find("scope-dpp") != std::string::npos) {
-      fDigitizerType = DigitizerType::SCOPE1;
+      fFirmwareType = FirmwareType::SCOPE1;
     } else {
       // Fall back to model name logic for SCOPE - extract 4-digit number
       std::string modelNumber = "";
@@ -609,15 +636,15 @@ void Digitizer2::DetermineDigitizerType()
         }
       }
       if (modelNumber.length() >= 4 && modelNumber[0] == '2') {
-        fDigitizerType = DigitizerType::SCOPE2;
+        fFirmwareType = FirmwareType::SCOPE2;
       } else {
-        fDigitizerType = DigitizerType::SCOPE1;
+        fFirmwareType = FirmwareType::SCOPE1;
       }
     }
   }
 
   // Final fallback: use model name if firmware type didn't match any pattern
-  if (fDigitizerType == DigitizerType::UNKNOWN) {
+  if (fFirmwareType == FirmwareType::UNKNOWN) {
     // Extract just the numeric part from model name like "DT5230" or "VX2730"
     std::string modelNumber = "";
     for (char c : modelName) {
@@ -631,10 +658,10 @@ void Digitizer2::DetermineDigitizerType()
       if (firstDigit == '2') {
         // Need to guess type based on model number ranges
         if (modelNumber.substr(0, 2) == "27") {  // 27xx series typically PSD
-          fDigitizerType = DigitizerType::PSD2;
+          fFirmwareType = FirmwareType::PSD2;
         } else if (modelNumber.substr(0, 3) ==
                    "274") {  // 274x series typically SCOPE
-          fDigitizerType = DigitizerType::SCOPE2;
+          fFirmwareType = FirmwareType::SCOPE2;
         }
       }
     }
@@ -698,29 +725,29 @@ void Digitizer2::PrintDeviceInfo()
 
   // Print Digitizer Type
   std::string typeStr;
-  switch (fDigitizerType) {
-    case DigitizerType::PSD1:
+  switch (fFirmwareType) {
+    case FirmwareType::PSD1:
       typeStr = "PSD1";
       break;
-    case DigitizerType::PSD2:
+    case FirmwareType::PSD2:
       typeStr = "PSD2";
       break;
-    case DigitizerType::PHA1:
+    case FirmwareType::PHA1:
       typeStr = "PHA1";
       break;
-    case DigitizerType::PHA2:
+    case FirmwareType::PHA2:
       typeStr = "PHA2";
       break;
-    case DigitizerType::QDC1:
+    case FirmwareType::QDC1:
       typeStr = "QDC1";
       break;
-    case DigitizerType::SCOPE1:
+    case FirmwareType::SCOPE1:
       typeStr = "SCOPE1";
       break;
-    case DigitizerType::SCOPE2:
+    case FirmwareType::SCOPE2:
       typeStr = "SCOPE2";
       break;
-    case DigitizerType::UNKNOWN:
+    case FirmwareType::UNKNOWN:
       typeStr = "UNKNOWN";
       break;
   }
@@ -728,7 +755,6 @@ void Digitizer2::PrintDeviceInfo()
 
   std::cout << "=========================" << std::endl;
 }
-
 
 }  // namespace Digitizer
 }  // namespace DELILA

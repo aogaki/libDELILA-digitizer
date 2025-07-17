@@ -2,13 +2,14 @@
 
 #include <algorithm>
 
-namespace DELILA {
-namespace Digitizer {
+namespace DELILA
+{
+namespace Digitizer
+{
 
 // Constructor
-RawData::RawData(size_t dataSize) 
-    : size(0),
-      nEvents(0) {
+RawData::RawData(size_t dataSize) : size(0), nEvents(0)
+{
   if (dataSize > 0) {
     Resize(dataSize);
   }
@@ -16,20 +17,19 @@ RawData::RawData(size_t dataSize)
 
 // Note: Copy and move constructors/operators are now defaulted in header
 
-void RawData::Resize(size_t newSize) {
+void RawData::Resize(size_t newSize)
+{
   size = newSize;
   data.resize(newSize);
 }
 
-void RawData::Clear() {
+void RawData::Clear()
+{
   Resize(0);
   nEvents = 0;
 }
 
-void RawData::Reserve(size_t capacity) {
-  data.reserve(capacity);
-}
-
+void RawData::Reserve(size_t capacity) { data.reserve(capacity); }
 
 }  // namespace Digitizer
 }  // namespace DELILA

@@ -16,7 +16,7 @@ Digitizer1::Digitizer1() {}
 
 Digitizer1::~Digitizer1()
 {
-  StopAcquisition();
+  ResetDigitizer();
   Close();
 }
 
@@ -117,6 +117,12 @@ bool Digitizer1::Configure()
     return false;
   }
 
+  // Enable fine timestamp forcefully
+  if (!EnableFineTimestamp()) {
+    std::cerr << "Failed to enable fine timestamp" << std::endl;
+    return false;
+  }
+
   return true;
 }
 
@@ -124,9 +130,9 @@ bool Digitizer1::StartAcquisition()
 {
   std::cout << "Start acquisition" << std::endl;
 
-  // Dig1Decoder should already be created in ConfigureSampleRate()
-  if (!fDig1Decoder) {
-    std::cerr << "Dig1Decoder not initialized - this should not happen!"
+  // Decoder should already be created in ConfigureSampleRate()
+  if (!fDecoder) {
+    std::cerr << "Decoder not initialized - this should not happen!"
               << std::endl;
     return false;
   }
@@ -137,7 +143,7 @@ bool Digitizer1::StartAcquisition()
     fReadDataThreads.emplace_back(&Digitizer1::ReadDataThread, this);
   }
 
-  // Note: Dig1Decoder handles data conversion internally in its threads
+  // Note: Decoder handles data conversion internally in its threads
 
   bool status = true;
   // Only send software start command if startmode is set to START_MODE_SW
@@ -188,7 +194,7 @@ bool Digitizer1::StopAcquisition()
   fReadDataThreads.clear();
 
   // Stop EventData conversion thread
-  // Dig1Decoder will stop automatically when threads join
+  // Decoder will stop automatically when threads join
 
   return status;
 }
@@ -196,16 +202,16 @@ bool Digitizer1::StopAcquisition()
 std::unique_ptr<std::vector<std::unique_ptr<EventData>>>
 Digitizer1::GetEventData()
 {
-  // Get EventData directly from Dig1Decoder
-  if (!fDig1Decoder) {
-    std::cerr << "Warning: Dig1Decoder not initialized in GetEventData()"
+  // Get EventData directly from Decoder
+  if (!fDecoder) {
+    std::cerr << "Warning: Decoder not initialized in GetEventData()"
               << std::endl;
     return std::make_unique<std::vector<std::unique_ptr<EventData>>>();
   }
 
-  auto data = fDig1Decoder->GetEventData();
+  auto data = fDecoder->GetEventData();
   if (fDebugFlag && data && !data->empty()) {
-    std::cout << "Retrieved " << data->size() << " events from Dig1Decoder"
+    std::cout << "Retrieved " << data->size() << " events from Decoder"
               << std::endl;
   }
   return data;
@@ -247,29 +253,29 @@ void Digitizer1::PrintDeviceInfo()
 
   // Print Digitizer Type
   std::string typeStr;
-  switch (fDigitizerType) {
-    case DigitizerType::PSD1:
+  switch (fFirmwareType) {
+    case FirmwareType::PSD1:
       typeStr = "PSD1";
       break;
-    case DigitizerType::PSD2:
+    case FirmwareType::PSD2:
       typeStr = "PSD2";
       break;
-    case DigitizerType::PHA1:
+    case FirmwareType::PHA1:
       typeStr = "PHA1";
       break;
-    case DigitizerType::PHA2:
+    case FirmwareType::PHA2:
       typeStr = "PHA2";
       break;
-    case DigitizerType::QDC1:
+    case FirmwareType::QDC1:
       typeStr = "QDC1";
       break;
-    case DigitizerType::SCOPE1:
+    case FirmwareType::SCOPE1:
       typeStr = "SCOPE1";
       break;
-    case DigitizerType::SCOPE2:
+    case FirmwareType::SCOPE2:
       typeStr = "SCOPE2";
       break;
-    case DigitizerType::UNKNOWN:
+    case FirmwareType::UNKNOWN:
       typeStr = "UNKNOWN";
       break;
   }
@@ -303,9 +309,35 @@ bool Digitizer1::CheckStatus()
 bool Digitizer1::Open(const std::string &url)
 {
   std::cout << "Open URL: " << url << std::endl;
-  auto err = CAEN_FELib_Open(url.c_str(), &fHandle);
-  CheckError(err);
-  return err == CAEN_FELib_Success;
+
+  // Try CAEN_FELib_Open up to 3 times
+  constexpr int maxRetries = 3;
+  int err = static_cast<int>(CAEN_FELib_InternalError);
+
+  for (int attempt = 1; attempt <= maxRetries; ++attempt) {
+    std::cout << "Attempt " << attempt << " of " << maxRetries << std::endl;
+
+    err = CAEN_FELib_Open(url.c_str(), &fHandle);
+
+    if (err == CAEN_FELib_Success) {
+      std::cout << "Successfully opened digitizer on attempt " << attempt
+                << std::endl;
+      return true;
+    }
+
+    // Log error for this attempt
+    std::cout << "Attempt " << attempt << " failed: ";
+    CheckError(err);
+
+    // Wait before retry (except on last attempt)
+    if (attempt < maxRetries) {
+      std::cout << "Waiting 1 second before retry..." << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+
+  std::cout << "All " << maxRetries << " attempts failed" << std::endl;
+  return false;
 }
 
 bool Digitizer1::Close()
@@ -384,7 +416,7 @@ std::string Digitizer1::GetDeviceTree()
   try {
     fDeviceTree = nlohmann::json::parse(jsonStr);
     // Determine digitizer type after parsing device tree
-    DetermineDigitizerType();
+    DetermineFirmwareType();
     // Create parameter validator with device tree
     fParameterValidator = std::make_unique<ParameterValidator>(fDeviceTree);
   } catch (const nlohmann::json::parse_error &e) {
@@ -395,9 +427,10 @@ std::string Digitizer1::GetDeviceTree()
   return jsonStr;
 }
 
-void Digitizer1::DetermineDigitizerType()
+void Digitizer1::DetermineFirmwareType()
 {
-  fDigitizerType = DigitizerType::UNKNOWN;  // Default
+  fFirmwareType = FirmwareType::UNKNOWN;      // Default
+  fDigitizerModel = DigitizerModel::UNKNOWN;  // Default
 
   if (!fDeviceTree.contains("par")) {
     return;
@@ -409,6 +442,13 @@ void Digitizer1::DetermineDigitizerType()
   // Get model name
   if (fDeviceTree["par"].contains("modelname")) {
     modelName = fDeviceTree["par"]["modelname"]["value"];
+
+    // Determine digitizer model based on model name
+    if (modelName.find("725") != std::string::npos) {
+      fDigitizerModel = DigitizerModel::X725;
+    } else if (modelName.find("730") != std::string::npos) {
+      fDigitizerModel = DigitizerModel::X730;
+    }
   }
 
   // Get firmware type
@@ -429,9 +469,9 @@ void Digitizer1::DetermineDigitizerType()
   if (fwType.find("psd") != std::string::npos) {
     // Check for DPP_PSD (underscore) = PSD2, DPP-PSD (hyphen) = PSD1
     if (fwType.find("dpp_psd") != std::string::npos) {
-      fDigitizerType = DigitizerType::PSD2;
+      fFirmwareType = FirmwareType::PSD2;
     } else if (fwType.find("dpp-psd") != std::string::npos) {
-      fDigitizerType = DigitizerType::PSD1;
+      fFirmwareType = FirmwareType::PSD1;
     } else {
       // Fall back to model name logic for PSD - extract 4-digit number
       std::string modelNumber = "";
@@ -441,17 +481,17 @@ void Digitizer1::DetermineDigitizerType()
         }
       }
       if (modelNumber.length() >= 4 && modelNumber[0] == '2') {
-        fDigitizerType = DigitizerType::PSD2;
+        fFirmwareType = FirmwareType::PSD2;
       } else {
-        fDigitizerType = DigitizerType::PSD1;
+        fFirmwareType = FirmwareType::PSD1;
       }
     }
   } else if (fwType.find("pha") != std::string::npos) {
     // Similar logic for PHA
     if (fwType.find("dpp_pha") != std::string::npos) {
-      fDigitizerType = DigitizerType::PHA2;
+      fFirmwareType = FirmwareType::PHA2;
     } else if (fwType.find("dpp-pha") != std::string::npos) {
-      fDigitizerType = DigitizerType::PHA1;
+      fFirmwareType = FirmwareType::PHA1;
     } else {
       // Fall back to model name logic for PHA - extract 4-digit number
       std::string modelNumber = "";
@@ -461,22 +501,22 @@ void Digitizer1::DetermineDigitizerType()
         }
       }
       if (modelNumber.length() >= 4 && modelNumber[0] == '2') {
-        fDigitizerType = DigitizerType::PHA2;
+        fFirmwareType = FirmwareType::PHA2;
       } else {
-        fDigitizerType = DigitizerType::PHA1;
+        fFirmwareType = FirmwareType::PHA1;
       }
     }
   } else if (fwType.find("qdc") != std::string::npos) {
-    fDigitizerType = DigitizerType::QDC1;
+    fFirmwareType = FirmwareType::QDC1;
   } else if (fwType.find("scope") != std::string::npos ||
              fwType.find("oscilloscope") != std::string::npos) {
     // Similar logic for SCOPE
     if (fwType.find("dpp_scope") != std::string::npos ||
         fwType.find("scope_dpp") != std::string::npos) {
-      fDigitizerType = DigitizerType::SCOPE2;
+      fFirmwareType = FirmwareType::SCOPE2;
     } else if (fwType.find("dpp-scope") != std::string::npos ||
                fwType.find("scope-dpp") != std::string::npos) {
-      fDigitizerType = DigitizerType::SCOPE1;
+      fFirmwareType = FirmwareType::SCOPE1;
     } else {
       // Fall back to model name logic for SCOPE - extract 4-digit number
       std::string modelNumber = "";
@@ -486,15 +526,15 @@ void Digitizer1::DetermineDigitizerType()
         }
       }
       if (modelNumber.length() >= 4 && modelNumber[0] == '2') {
-        fDigitizerType = DigitizerType::SCOPE2;
+        fFirmwareType = FirmwareType::SCOPE2;
       } else {
-        fDigitizerType = DigitizerType::SCOPE1;
+        fFirmwareType = FirmwareType::SCOPE1;
       }
     }
   }
 
   // Final fallback: use model name if firmware type didn't match any pattern
-  if (fDigitizerType == DigitizerType::UNKNOWN) {
+  if (fFirmwareType == FirmwareType::UNKNOWN) {
     // Extract just the numeric part from model name like "DT5230" or "VX2730"
     std::string modelNumber = "";
     for (char c : modelName) {
@@ -508,10 +548,10 @@ void Digitizer1::DetermineDigitizerType()
       if (firstDigit == '2') {
         // Need to guess type based on model number ranges
         if (modelNumber.substr(0, 2) == "27") {  // 27xx series typically PSD
-          fDigitizerType = DigitizerType::PSD2;
+          fFirmwareType = FirmwareType::PSD2;
         } else if (modelNumber.substr(0, 3) ==
                    "274") {  // 274x series typically SCOPE
-          fDigitizerType = DigitizerType::SCOPE2;
+          fFirmwareType = FirmwareType::SCOPE2;
         }
       }
     }
@@ -536,6 +576,7 @@ bool Digitizer1::ResetDigitizer() { return SendCommand("/cmd/Reset"); }
 bool Digitizer1::ApplyConfiguration()
 {
   bool status = true;
+
   for (const auto &config : fConfig) {
     // Only use parameters that start with '/' (CAEN digitizer paths)
     if (!config[0].empty() && config[0][0] == '/') {
@@ -595,18 +636,75 @@ bool Digitizer1::ConfigureSampleRate()
   // Calculate time per sample in nanoseconds: (1000 ns) / (rate in MHz)
   uint32_t timeStepNs = 1000 / adcSamplRateMHz;
 
-  // Create Dig1Decoder if not already created
-  if (!fDig1Decoder) {
-    fDig1Decoder = std::make_unique<Dig1Decoder>(fNThreads);
+  // Create appropriate decoder based on firmware type
+  if (!fDecoder) {
+    if (fFirmwareType == FirmwareType::PSD1) {
+      fDecoder = std::make_unique<PSD1Decoder>(fNThreads);
+      std::cout << "Created PSD1Decoder" << std::endl;
+    } else if (fFirmwareType == FirmwareType::PHA1) {
+      fDecoder = std::make_unique<PHA1Decoder>(fNThreads);
+      std::cout << "Created PHA1Decoder" << std::endl;
+    } else {
+      std::cerr << "Unsupported digitizer type: "
+                << static_cast<int>(fFirmwareType) << std::endl;
+      return false;
+    }
   }
 
-  // Configure Dig1Decoder
-  fDig1Decoder->SetTimeStep(timeStepNs);
-  fDig1Decoder->SetDumpFlag(fDebugFlag);
-  fDig1Decoder->SetModuleNumber(fModuleNumber);
+  // Configure Decoder
+  fDecoder->SetTimeStep(timeStepNs);
+  fDecoder->SetDumpFlag(fDebugFlag);
+  fDecoder->SetModuleNumber(fModuleNumber);
 
   std::cout << "ADC Sample Rate: " << adcSamplRateMHz << " MHz" << std::endl;
   std::cout << "Time step: " << timeStepNs << " ns per sample" << std::endl;
+
+  return true;
+}
+
+bool Digitizer1::EnableFineTimestamp()
+{
+  // Check digitizer model
+  if (fDigitizerModel != DigitizerModel::X725 &&
+      fDigitizerModel != DigitizerModel::X730) {
+    std::cerr << "Fine timestamp not supported for this digitizer model"
+              << std::endl;
+    return false;
+  }
+
+  // Determine base register address based on firmware type
+  uint32_t baseAddress = 0;
+  if (fFirmwareType == FirmwareType::PSD1) {
+    baseAddress = 0x1084;
+  } else if (fFirmwareType == FirmwareType::PHA1) {
+    baseAddress = 0x10A0;
+  } else {
+    std::cerr << "Fine timestamp not supported for this firmware type"
+              << std::endl;
+    return false;
+  }
+
+  // Get number of channels from parameter
+  std::string numChStr;
+  if (!GetParameter("/par/numch", numChStr)) {
+    std::cerr << "Failed to get number of channels" << std::endl;
+    return false;
+  }
+  int numChannels = std::stoi(numChStr);
+
+  // Configure fine timestamp for all channels
+  for (auto i = 0; i < numChannels; i++) {
+    const uint32_t address = baseAddress + (i << 8);
+    uint32_t value = 0;
+    auto err = CAEN_FELib_GetUserRegister(fHandle, address, &value);
+    CheckError(err);
+
+    // bit[8:10] = 0b010
+    value &= ~(0b111 << 8);  // Clear bits [8:10]
+    value |= (0b010 << 8);   // Set to 0b010 for fine timestamp
+    err = CAEN_FELib_SetUserRegister(fHandle, address, value);
+    CheckError(err);
+  }
 
   return true;
 }
@@ -660,15 +758,15 @@ void Digitizer1::ReadDataThread()
     auto err = ReadDataWithLock(rawData, timeOut);
 
     if (err == CAEN_FELib_Success) {
-      // Add data through Dig1Decoder converter ONLY
-      if (fDig1Decoder) {
-        auto dataType = fDig1Decoder->AddData(std::move(rawData));
+      // Add data through Decoder converter ONLY
+      if (fDecoder) {
+        auto dataType = fDecoder->AddData(std::move(rawData));
         if (fDebugFlag) {
-          std::cout << "Added data to Dig1Decoder, type: "
+          std::cout << "Added data to Decoder, type: "
                     << static_cast<int>(dataType) << std::endl;
         }
       } else {
-        std::cerr << "Error: Dig1Decoder not available in ReadDataThread"
+        std::cerr << "Error: Decoder not available in ReadDataThread"
                   << std::endl;
       }
       rawData = std::make_unique<RawData_t>(fMaxRawDataSize);
@@ -694,13 +792,13 @@ int Digitizer1::ReadDataWithLock(std::unique_ptr<RawData_t> &rawData,
   return retCode;
 }
 
-// EventConversionThread removed - Dig1Decoder handles conversion internally
+// EventConversionThread removed - Decoder handles conversion internally
 
-// ConvertRawToEventData removed - Dig1Decoder handles conversion internally
+// ConvertRawToEventData removed - Decoder handles conversion internally
 
-// ProcessDig1RawData removed - Dig1Decoder handles raw data processing internally
+// ProcessDig1RawData removed - Decoder handles raw data processing internally
 
-// DecodeDig1Event removed - Dig1Decoder handles event decoding internally
+// DecodeDig1Event removed - Decoder handles event decoding internally
 
 }  // namespace Digitizer
 }  // namespace DELILA

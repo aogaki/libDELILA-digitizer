@@ -1,15 +1,12 @@
 #ifndef DATATYPE_HPP
 #define DATATYPE_HPP
 
-namespace DELILA {
-namespace Digitizer {
+namespace DELILA
+{
+namespace Digitizer
+{
 
-enum class DataType {
-  Start,
-  Stop,
-  Event,
-  Unknown
-};
+enum class DataType { Start, Stop, Event, Unknown };
 
 }  // namespace Digitizer
 }  // namespace DELILA
