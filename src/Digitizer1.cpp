@@ -672,18 +672,6 @@ bool Digitizer1::EnableFineTimestamp()
     return false;
   }
 
-  // Determine base register address based on firmware type
-  uint32_t baseAddress = 0;
-  if (fFirmwareType == FirmwareType::PSD1) {
-    baseAddress = 0x1084;
-  } else if (fFirmwareType == FirmwareType::PHA1) {
-    baseAddress = 0x10A0;
-  } else {
-    std::cerr << "Fine timestamp not supported for this firmware type"
-              << std::endl;
-    return false;
-  }
-
   // Get number of channels from parameter
   std::string numChStr;
   if (!GetParameter("/par/numch", numChStr)) {
@@ -692,18 +680,28 @@ bool Digitizer1::EnableFineTimestamp()
   }
   int numChannels = std::stoi(numChStr);
 
-  // Configure fine timestamp for all channels
-  for (auto i = 0; i < numChannels; i++) {
-    const uint32_t address = baseAddress + (i << 8);
-    uint32_t value = 0;
-    auto err = CAEN_FELib_GetUserRegister(fHandle, address, &value);
-    CheckError(err);
+  // Determine extras option value based on firmware type
+  std::string extrasValue;
+  if (fFirmwareType == FirmwareType::PSD1) {
+    extrasValue = "EXTRAS_OPT_TT48_FLAGS_FINETT";
+  } else if (fFirmwareType == FirmwareType::PHA1) {
+    extrasValue = "EXTRAS_OPT_TT48_FINETT";
+  } else {
+    std::cerr << "Fine timestamp not supported for this firmware type" << std::endl;
+    return false;
+  }
 
-    // bit[8:10] = 0b010
-    value &= ~(0b111 << 8);  // Clear bits [8:10]
-    value |= (0b010 << 8);   // Set to 0b010 for fine timestamp
-    err = CAEN_FELib_SetUserRegister(fHandle, address, value);
-    CheckError(err);
+  // Set extras option for all channels using parameter system
+  std::string path = "/ch/0.." + std::to_string(numChannels - 1) + "/par/ch_extras_opt";
+  
+  if (!SetParameter(path, extrasValue)) {
+    std::cerr << "Failed to set extras option for fine timestamp" << std::endl;
+    return false;
+  }
+
+  if (fDebugFlag) {
+    std::cout << "Set fine timestamp for channels 0-" << (numChannels - 1) 
+              << " using parameter system" << std::endl;
   }
 
   return true;
